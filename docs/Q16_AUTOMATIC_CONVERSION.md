@@ -17,13 +17,13 @@ This format provides decimal precision without requiring floating-point hardware
 When you write a floating-point number in your HAS code, the compiler automatically converts it using:
 
 ```
-Q16.16 = int(float_value Ã— 65536)
+Q16.16 = int(float_value × 65536)
 ```
 
 For example:
-- `2.5` becomes `163840` (2.5 Ã— 65536)
-- `0.98` becomes `64225` (0.98 Ã— 65536)
-- `43.55` becomes `2854092` (43.55 Ã— 65536)
+- `2.5` becomes `163840` (2.5 × 65536)
+- `0.98` becomes `64225` (0.98 × 65536)
+- `43.55` becomes `2854092` (43.55 × 65536)
 
 ## Usage Examples
 
@@ -70,7 +70,7 @@ const HEX_VALUE = 0xFF;          // Remains 255
 const BIN_VALUE = %11111111;     // Remains 255
 
 // Floating-point values are converted
-const FLOAT_VALUE = 100.0;       // Becomes 6553600 (100.0 Ã— 65536)
+const FLOAT_VALUE = 100.0;       // Becomes 6553600 (100.0 × 65536)
 ```
 
 ## Important Notes
@@ -177,5 +177,5 @@ python3 tools/q16_helper.py --reverse 163840
 ## See Also
 
 - [Q16_HELPER_README.md](Q16_HELPER_README.md) - Q16 helper tool documentation
-- [COMPILER_FEATURES_SUMMARY.md](COMPILER_FEATURES_SUMMARY.md) - Complete feature list
+- [Developer's Guide](DEVELOPERS_GUIDE.md#compile-time-constants) - Compile-time constants
 - Examples: [q16_float_test.has](../examples/tests/compiler/q16_float_test.has), [q16_comprehensive_test.has](../examples/tests/compiler/q16_comprehensive_test.has)

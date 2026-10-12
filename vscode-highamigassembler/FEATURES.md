@@ -1,4 +1,4 @@
-# HAS VS Code Extension - Complete Feature Documentation
+# HAS VS Code Extension Feature Guide
 
 ## Overview
 
@@ -123,7 +123,7 @@ Edit `.vscode/keybindings.json`:
 
 ### What Can Be Found
 
-✅ **Procedures** (`proc name() -> type {}`)
+**Procedures** (`proc name() -> type {}`)
 ```has
 proc update_display() -> long {
     // Ctrl+Click on any call to update_display
@@ -132,26 +132,29 @@ proc update_display() -> long {
 }
 ```
 
-✅ **Forward Declarations** (`func name() -> type;`)
+**Calls with forward declarations** (`func name() -> type;`)
 ```has
 func helper() -> long;  // Forward declaration
 
 proc main() -> long {
-    return helper();  // Can jump to forward declaration
+    return helper();  // Jumps to a matching proc definition in the workspace
 }
 ```
 
-✅ **External Functions** (`extern func`)
+The `func` declaration itself is not a definition target. Definition lookup
+matches `proc name(` in HAS files.
+
+**External functions** (`extern func`)
 ```has
 extern func TakeSystem() -> long;
 
 proc startup() -> long {
-    TakeSystem();  // Searches assembly files
+    TakeSystem();  // Searches for a matching TakeSystem: assembly label
     return 0;
 }
 ```
 
-✅ **Assembly Labels** (in `.s` files)
+**Assembly labels** (in `.s` files)
 ```asm
 TakeSystem:
     movem.l d0-a6,-(sp)
@@ -159,7 +162,8 @@ TakeSystem:
     rts
 ```
 
-❌ **Not Supported Yet**
+**Not supported**
+- Navigation to `func` or `extern func` declaration lines
 - Struct definitions
 - Macro definitions
 - Global variables
@@ -228,9 +232,9 @@ code demo:
 ### 3. Reference Provider (Shift+F12)
 
 **What it does:**
-- Finds all places where a procedure is used
-- Includes definition and all calls
-- Shows total count
+- Scans `.has` files for matching calls and declarations
+- Shows the raw regex-match count
+- Opens the first matching location
 
 **Example:**
 ```has
@@ -248,7 +252,9 @@ code app:
         return 0;
     }
 ```
-Press Shift+F12 on `calc` → Shows "Found 4 reference(s)"
+Press Shift+F12 on `calc` to open the first raw match. The reported count may
+include the `proc` declaration twice because it matches both the call and
+declaration patterns.
 
 ---
 
@@ -350,7 +356,7 @@ ReleaseSystem:
     rts
 ```
 
-### Example 4: Finding All References
+### Example 4: Scanning References
 
 ```has
 code app:
@@ -373,9 +379,8 @@ code app:
     }
 ```
 
-**Shift+F12 on `utility`:** Found 5 references
-- 1 definition
-- 4 calls
+**Shift+F12 on `utility`:** opens the first raw match and reports the number of
+regex matches. It does not show a browsable, deduplicated reference list.
 
 ---
 

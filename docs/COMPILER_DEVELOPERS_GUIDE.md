@@ -1400,7 +1400,7 @@ When working on the compiler, always:
 - [README.md](../README.md) - Project overview
 - [INSTALL.md](INSTALL.md) - Setup and first compile
 - [OPERATORS.md](OPERATORS.md) - Operator precedence and implementation
-- [PROC_VS_FUNC_SUMMARY.md](PROC_VS_FUNC_SUMMARY.md) - Function declaration patterns
+- [TERMINOLOGY.md](TERMINOLOGY.md) - Function declaration patterns
 
 ### External Resources
 
@@ -1419,5 +1419,3 @@ If you have questions or want to contribute:
 2. **Check existing examples** for similar patterns
 3. **Test your changes extensively**
 4. **Document your implementation**
-
-Happy hacking! 🚀

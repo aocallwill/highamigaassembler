@@ -1,8 +1,11 @@
-﻿# Struct Pointer Feature - Implementation Complete âœ“
+﻿# Struct Pointers
 
-## Summary
+## Overview
 
-The HAS compiler now supports pointer-to-struct functionality! You can declare pointer variables to struct types, get the address of struct array elements, and dereference pointers to access and modify struct fields.
+HAS supports typed struct pointers, addresses of struct-array elements, field
+access through pointers, and indexed pointer access. These forms are available
+for both `--cpu 68000` and `--cpu 68020`; instruction selection differs where
+the 68020 target can use scaled indexed addressing.
 
 ## Syntax
 
@@ -89,6 +92,15 @@ The suffix form remains correct and is not deprecated - it is the right choice
 for flags, frame indices, tile IDs, and other non-negative data, and it stays
 byte-for-byte compatible with existing code.
 
+## Reusing an Element Address
+
+Repeated `array[i].field` expressions recalculate the element address. In a hot
+loop that accesses several fields, take the address once and reuse a typed
+pointer.
+
+### Repeated Array Access
+
+```has
 proc UpdateBullets() -> void {
     var i:int;
     
@@ -103,7 +115,7 @@ proc UpdateBullets() -> void {
 }
 ```
 
-Generated assembly for old way:
+The generated code recalculates the element offset for each access:
 ```asm
 lea bullet,a0
 move.l d7,d1
@@ -119,7 +131,7 @@ mulu.w #10,d1           ; RECALCULATE AGAIN
 ; ... and so on for each field
 ```
 
-### After (Single Address Calculation)
+### Reused Pointer
 ```has
 proc UpdateBullets() -> void {
     var i:int;
@@ -137,7 +149,7 @@ proc UpdateBullets() -> void {
 }
 ```
 
-Generated assembly for new way:
+The pointer form calculates the element address once, then uses field offsets:
 ```asm
 lea bullet,a0
 move.l d7,d1
@@ -150,15 +162,12 @@ move.l -8(a4),a0        ; Load pointer
 move.w (a0),d0          ; Access x field at offset 0
 move.l -8(a4),a0        ; Load pointer
 move.b 4(a0),d2         ; Access dir_x at offset 4
-; ... much more efficient!
+; ... additional field accesses reuse the pointer
 ```
 
-## Performance Benefit
-
-For the robots.has game example, using struct pointers in `DrawBullets()` reduced:
-- **6-8 array index calculations** â†’ **1 address calculation + pointer reuse**
-- **Instruction count reduced by ~40-50%** in hot loops
-- **Register pressure reduced** (fewer temporary address calculations)
+Whether this improves a particular loop depends on field count, register
+pressure, and surrounding expressions. Compare the generated `.s` files for
+the target CPU instead of relying on a fixed percentage estimate.
 
 ## Passing Pointers to Functions
 
@@ -180,45 +189,34 @@ proc main() -> long {
 }
 ```
 
-## Implementation Details
+## Compiler Model
 
-### Changes Made
+- The parser represents `p->field` and `(*p).field` as member access through a
+    typed pointer.
+- `hasc/codegen.py` resolves the pointee layout and derives element stride,
+    load width, and signedness from that layout.
+- `hasc/codegen_indexed_address.py` applies the same indexed-address lowering
+    to matching pointer and array reads and writes.
+- `hasc/validator.py` rejects indexing when the pointee has no defined size,
+    including `void*`.
 
-1. **Parser Grammar** (hasc/parser.py):
-   - Added `"(" STAR CNAME ")" "." CNAME` pattern to `lvalue` rule
-   - Allows `(*p).field` in assignment statements
+## Examples and Verification
 
-2. **Parser Handler** (hasc/parser.py):
-   - Extended `lvalue()` method to handle dereferenced struct member pattern
-   - Constructs `MemberAccess(base=UnaryOp(op='*', operand=ptr), field=name)`
+- `examples/tests/compiler/struct_pointer_test.has` covers field reads, writes,
+    address-of, and loop usage.
+- `examples/struct_pointer_advanced.has` demonstrates address reuse and pointer
+    parameters.
+- `tests/test_pointer_element_stride.py` verifies read/write symmetry and
+    pointer/array stride equivalence on 68000 and 68020.
+- `tests/test_typed_struct_fields.py` verifies signed and unsigned narrow-field
+    loads on both CPU targets.
 
-3. **AST Helper** (hasc/ast.py):
-   - Added `pointer_base_type()` function to extract base type from pointer types
-   - Example: `'bullet*'` â†’ `'bullet'`
+Compile the compiler example for both targets:
 
-### Already Working (No Changes Needed)
-
-1. **Type system**: Already supported `TypeName*` syntax
-2. **Address-of operator**: `&array[i]` already generates correct code
-3. **Pointer dereferencing in expressions**: `(*p).field` for reading already worked
-4. **Code generation**: Both `_emit_expr()` and `_emit_stmt()` already handle pointer dereference with struct member access
-
-## Testing
-
-Two comprehensive test files demonstrate the feature:
-
-1. **examples/tests/compiler/struct_pointer_test.has**
-   - Basic struct pointer operations
-   - Reading and writing through pointers
-   - Loop-based pointer usage
-   - Verification tests
-
-2. **examples/struct_pointer_advanced.has**
-   - Performance comparison (old way vs new way)
-   - Function parameter passing
-   - Real-world game loop example
-
-Both compile successfully and generate optimal assembly code.
+```bash
+python -m hasc.cli examples/tests/compiler/struct_pointer_test.has --cpu 68000 -o build/struct_pointer_68000.s
+python -m hasc.cli examples/tests/compiler/struct_pointer_test.has --cpu 68020 -o build/struct_pointer_68020.s
+```
 
 ## Migration Guide
 
@@ -233,7 +231,7 @@ if (entity[i].active) {
 }
 ```
 
-### Optimization
+### Address-Reuse Pattern
 
 Replace with:
 ```has
@@ -265,7 +263,7 @@ Don't bother for:
 
 C-style arrow operator for cleaner syntax:
 ```has
-p->field      // âœ“ Recommended - clean and readable
+p->field      // Recommended
 p->x = 100;
 var y = p->y;
 ```
@@ -274,11 +272,11 @@ var y = p->y;
 
 Direct dereference syntax (requires parentheses):
 ```has
-(*p).field    // âœ“ Also works - more explicit
+(*p).field    // Equivalent explicit form
 (*p).x = 100;
 var y = (*p).y;
 
-*p.field      // âœ— Won't work - ambiguous parsing
+*p.field      // Invalid: ambiguous parsing
 ```
 
 **Note:** The arrow operator `p->field` is syntactic sugar that the compiler translates to `(*p).field` internally. Both produce identical assembly code.
@@ -298,19 +296,8 @@ p = &bullet[i];
 p = &bullet[i+1];  // Better than pointer arithmetic
 ```
 
-## Documentation
+## Related Material
 
-Full implementation details in:
-- [docs/STRUCT_POINTER_IMPLEMENTATION.md](STRUCT_POINTER_IMPLEMENTATION.md) - Technical specification
-
-Example code in:
-- [examples/tests/compiler/struct_pointer_test.has](../examples/tests/compiler/struct_pointer_test.has) - Basic usage
-- [examples/struct_pointer_advanced.has](../examples/struct_pointer_advanced.has) - Advanced patterns
-
-## Conclusion
-
-Struct pointers are now fully functional in HAS! This feature enables significant performance optimizations in game code and other performance-critical applications by eliminating redundant array index calculations.
-
-The implementation was straightforward because most of the infrastructure already existed - we primarily needed to extend the parser to accept `(*p).field` as a valid left-hand side of assignments.
-
-Enjoy the performance boost! ðŸš€
+- [Struct pointer compiler example](../examples/tests/compiler/struct_pointer_test.has)
+- [Advanced struct pointer example](../examples/struct_pointer_advanced.has)
+- [Array access code generation](ARRAY_ACCESS_IMPLEMENTATION.md)

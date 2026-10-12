@@ -17,6 +17,14 @@ Project documentation specialist for HAS (High Assembler), focused on correctnes
 - Improve cross-linking and migration notes for behavior changes.
 - HAS supports two CPU targets via `--cpu`: `68000` (default) and `68020`. When documenting codegen/addressing/instruction-selection changes, always state which CPU target(s) the behavior applies to - never describe 68020-only behavior as if it were the general/default case, and never assume a change silently applies to both targets without verifying with the compiler/tests agents. See [docs/CPU_68020_IMPLEMENTATION_PLAN.md](../../docs/CPU_68020_IMPLEMENTATION_PLAN.md) for current 68020 phase status.
 
+## Documentation Boundaries
+
+- Do not create documents whose purpose is to report what was fixed, implemented, completed, changed, or validated during a task. This includes implementation summaries, completion reports, final reports, work logs, and lists of files changed.
+- Put transient work summaries, validation results, and completion details in the final chat response instead of a repository file.
+- Continue to update the canonical README, technical guides, user guides, examples, and changelog when the work changes documented behavior or workflows.
+- Create a new document only when it provides durable user or developer reference material that does not fit an existing canonical guide.
+- Keep changelog entries focused on user-visible behavior and migration impact; do not use the changelog as a task report.
+
 ## Modern Quality Criteria
 
 1. Evidence-first updates: base documentation changes on concrete code or example evidence.
@@ -38,7 +46,7 @@ Project documentation specialist for HAS (High Assembler), focused on correctnes
 
 ## Output Contract
 
-- Return a short list of updated files.
-- Summarize what changed and why.
+- In the final chat response, return a short list of updated files.
+- In the final chat response, summarize what changed and why.
 - Flag any unresolved documentation ambiguity as open questions.
 - If code evidence is insufficient to determine correct behavior, flag the section as an open question in the Output Contract rather than guessing.

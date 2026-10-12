@@ -38,7 +38,7 @@ code --install-extension vscode-highamigassembler-0.1.0.vsix
 
 ## Features
 
-### Follow Link - Ctrl+Click ⭐ (New!)
+### Follow Link - Ctrl+Click
 
 Hold **Ctrl** and click on any procedure name to jump to its definition:
 
@@ -65,7 +65,7 @@ code game:
 |----------|--------|
 | **F12** | Go to Definition (place cursor on procedure name) |
 | **Ctrl+Click** | Go to Definition (click on procedure name) |
-| **Shift+F12** | Find All References (place cursor on name) |
+| **Shift+F12** | Scan references and open first match |
 | **Ctrl+Alt+Left** | Go Back (standard VS Code) |
 
 ## Example Workflows
@@ -145,9 +145,9 @@ TakeSystem:
 2. Extension searches `.s` files
 3. Opens takeover.s at `TakeSystem:` label
 
-### Scenario 4: Find All References
+### Scenario 4: Scan References
 
-Find every place a procedure is used:
+Scan workspace `.has` files for matching calls and declarations:
 
 ```has
 code app:
@@ -166,8 +166,11 @@ code app:
 
 1. Place cursor on `utility`
 2. Press **Shift+F12**
-3. Shows: "Found 4 reference(s)" (includes 1 definition + 3 calls)
-4. Navigate through each with arrow keys or mouse
+3. The extension reports the raw regex-match count
+4. The custom command opens the first match
+
+The count is not a deduplicated symbol result: a `proc` declaration also
+matches the generic call pattern and may be counted twice.
 
 ## Hover Information
 
@@ -227,17 +230,31 @@ The extension uses three providers:
 - Displays parameters, return type, and declaration type
 
 ### 3. Reference Provider
-- Finds all usages of a procedure when you press Shift+F12
+- Scans calls and declarations when you press Shift+F12
 - Searches all `.has` files in workspace
+- Returns raw regex matches; the custom command opens the first location
 
 ## Development
 
 To customize the extension:
 
+### Activation and Providers
+
+`extension.js` is activated by `onLanguage:highamigassembler` and registers
+definition, hover, and reference providers. `package.json` contributes the
+`highamigassembler.goToDefinition` and
+`highamigassembler.findReferences` commands.
+
+Definition lookup returns the first match. It searches the current document,
+then up to 100 workspace `.has` files, then up to 100 `.s` files. HAS targets
+must match `proc name(`; assembly targets must be `name:` labels on their own
+line. Reference lookup matches identifier calls of the form `name(` with
+optional whitespace before `(`.
+
 ### Edit Search Patterns
 File: `extension.js`
-- Line ~50: `findDefinitionInFile()` - HAS procedure pattern
-- Line ~75: `findDefinitionInAssembly()` - Assembly label pattern
+- `findDefinitionInFile()` - HAS procedure pattern
+- `findDefinitionInAssembly()` - Assembly label pattern
 
 ### Add New Commands
 File: `package.json` - Add to `contributes.commands` array
@@ -245,6 +262,14 @@ File: `extension.js` - Add to `activate()` function
 
 ### Modify Keybindings
 File: `package.json` - Edit `contributes.keybindings`
+
+### Verify Development Changes
+
+1. Open `vscode-highamigassembler` in VS Code.
+2. Press **F5** to launch an Extension Development Host.
+3. Open a `.has` file in that host to activate the extension.
+4. Exercise F12, Shift+F12, and hover behavior against local, cross-file, and
+    assembly-label cases affected by the change.
 
 ## Configuration
 
