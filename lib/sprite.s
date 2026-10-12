@@ -375,9 +375,14 @@ Sprite_Show:
 	moveq #-1,d0
 	rts
 
-; HideSprite(handle): clear visible flag
+; HideSprite(handle): clear visible flag and terminate chip sprite data.
+; Writing SPRxPOS/SPRxCTL = 0,0 makes the slot end immediately even if copper
+; still briefly points at this chip buffer before UpdateSpritePointers runs.
+; Callers must still UpdateSpritePointers() (or park onto null_sprite) and must
+; NOT cut sprite DMA mid-display via HideSprites() — that freezes the last
+; fetched sprite word as a full-height vertical line.
 Sprite_Hide:
-	movem.l d1-d3/a2,-(sp)
+	movem.l d1-d3/a0/a2,-(sp)
 	cmpi.l #0,d0
 	blt .h_done
 	cmpi.l #MAX_SPRITES,d0
@@ -388,11 +393,16 @@ Sprite_Hide:
 	lea sprites_table,a2
 	add.l d3,a2
 	move.b #0,8(a2)
-	movem.l (sp)+,d1-d3/a2
+	move.l (a2),a0          ; chip data_ptr
+	cmp.l #0,a0
+	beq.s .h_ok
+	clr.l (a0)              ; POS=0, CTL=0 → empty/disabled sprite
+.h_ok:
+	movem.l (sp)+,d1-d3/a0/a2
 	moveq #1,d0
 	rts
 .h_done:
-	movem.l (sp)+,d1-d3/a2
+	movem.l (sp)+,d1-d3/a0/a2
 	moveq #-1,d0
 	rts
 

@@ -184,6 +184,22 @@ code main:
         # Per-iteration compare must use the induction register, not a frame reload of i.
         assert re.search(r"cmp\.l\s+d1,d[3-6]", body)
         assert not re.search(r"move\.l\s+-\d+\(a[46]\),d0\s*\n\s*cmp\.l", body)
+        # Peephole must NOT delete the live induction init (jetpac laser/meteor bug).
+        assert re.search(r"move(?:q|\.l)\s+#0,d[3-6]", body)
+
+    def test_for_body_incr_blocks_induction(self):
+        src = """
+code main:
+    proc weird(n: int) -> int {
+        var i: int;
+        for i = 0 to n by 1 {
+            i++;
+        }
+        return i;
+    }
+"""
+        body = proc_body(compile_src(src), "weird")
+        assert "kept in d" not in body
 
     def test_for_with_call_stays_memory_backed(self):
         src = """

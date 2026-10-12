@@ -22,6 +22,11 @@
   influences frame-register choice (a4 vs a6).
 - Statement emission still prefers ABI `d0`/`d1` for results; allocator is for nested temps
   and for-loop induction (`induction_regs` map + `try_allocate_preserve`).
+- Induction init must leave a live `move #start,Dn` that peephole cannot delete. Do **not**
+  emit a redundant `move Dn,frame` immediately after init (that pattern was folded by
+  `_fold_immediate_to_memory` into `move #start,frame`, leaving Dn garbage — broke jetpac
+  laser/meteor free-slot scans). Frame writeback happens at loop `end_label`. Peephole now
+  also refuses the fold when Dn is still live after the store.
 - **d7 is the one truly-reserved register**: never used as a general scratch. It is
   compiler-wide reserved for `dbra` loop counters (`RepeatLoop`, and the `ForLoop` DBcc fast
   path), managed by `CodeGen.dbra_depth` / `_dbra_loop_enter`/`_dbra_loop_exit`.
@@ -69,8 +74,10 @@
 - Implementation in `hasc/codegen.py`: caches dynamic step in `d2`, exits on zero step (`beq end`), and selects ascending (`bgt`) vs descending (`blt`) bound checks at runtime.
 - Regression coverage added in `tests/test_scc_dbcc_codegen.py` (`test_dynamic_step_emits_runtime_direction_checks`, `test_dynamic_step_uses_d2_for_increment`).
 
-## Amiga hardware sprite DMA invariant (fixed 2026-08-21)
+## Amiga hardware sprite DMA invariant (fixed 2026-08-21; jetpac letter bar 2026-10-12)
 - Sprite DMA may be enabled during graphics modes; every unused/hidden hardware sprite copper pointer must target a valid chip-RAM null sprite, never zero/stale memory.
+- Do **not** call `HideSprites()` (sprite DMA off) to “remove” gameplay sprites mid-frame while the mode still runs with sprite DMA expected on — Agnus repeats the last fetched sprite word as a full-height vertical line. Park with `HideSprite` + `UpdateSpritePointers` (copper → `null_sprite`). `Sprite_Hide` also clears chip POS/CTL to 0,0 as defense in depth.
+- jetpac letter teardown uses `park_letter_sprites()` for catch-last / TTL / death / level-complete / title.
 - `lib/sprite.s` `Sprite_UpdatePointers` must gate real sprite pointers on both `data_ptr != 0` and visible flag bit 0 at metadata offset 8; `InitSpriteSlots` can preassign chip slots without making sprites visible.
 - Keep mode-specific sprite pointer copper blocks in sync for lores, hires, and HAM6 (`gfx_sprcop_lores`, `gfx_sprcop_hires`, `gfx_sprcop_ham6`).
 

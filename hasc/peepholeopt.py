@@ -516,6 +516,39 @@ def _optimize_branch_to_branch(lines):
     
     return optimized
 
+def _is_pure_reg_kill(instruction, reg):
+    """True when ``instruction`` overwrites ``reg`` without reading it."""
+    base = instruction.split(';', 1)[0].rstrip().strip()
+    m = re.match(rf"(?:move(?:\.[bwl])?|moveq)\s+(\S+),\s*{re.escape(reg)}$", base)
+    if m and not re.search(rf"\b{re.escape(reg)}\b", m.group(1)):
+        return True
+    if re.match(rf"(?:clr|ext|extb)(?:\.[bwl])?\s+{re.escape(reg)}$", base):
+        return True
+    return False
+
+
+def _register_live_after(lines, start_idx, reg):
+    """Conservative liveness: True if ``reg`` may be read after ``start_idx``.
+
+    Labels and branches are treated as live (loop back-edges / unknown CFG).
+    A pure kill of ``reg`` ends the scan as dead.
+    """
+    for j in range(start_idx, len(lines)):
+        base = lines[j].split(';', 1)[0].rstrip()
+        stripped = base.strip()
+        if not stripped:
+            continue
+        if _is_label(base):
+            return True
+        if _is_branch(base):
+            return True
+        if re.search(rf"\b{re.escape(reg)}\b", stripped):
+            if _is_pure_reg_kill(stripped, reg):
+                return False
+            return True
+    return False
+
+
 def _fold_immediate_to_memory(lines):
     """Fold patterns loading an immediate into a register followed by a store to memory.
 
@@ -527,7 +560,8 @@ def _fold_immediate_to_memory(lines):
     Safety:
     - Only folds when the store destination is not a register (i.e., memory EA).
     - Ensure gap instruction does not modify the source register.
-    - CCR after the store is identical either way; removing the initial immediate load does not alter CCR used later.
+    - Do **not** fold when dX remains live after the store (e.g. for-loop induction
+      register init ``move #0,d6`` + ``move d6,frame`` then ``cmp d1,d6``).
     """
     optimized = []
     i = 0
@@ -550,9 +584,11 @@ def _fold_immediate_to_memory(lines):
                     size = m2.group(1)
                     dest = m2.group(2)
                     if not re.match(r"[da]\d+$", dest):
-                        optimized.append(f"{indent}move{size} #{val},{dest}{comment2}")
-                        i += 2
-                        continue
+                        # Keep Dn load when the register is still live after the store.
+                        if not _register_live_after(lines, i + 2, reg):
+                            optimized.append(f"{indent}move{size} #{val},{dest}{comment2}")
+                            i += 2
+                            continue
 
                 # One-gap variant
                 if i + 2 < len(lines):
@@ -571,9 +607,10 @@ def _fold_immediate_to_memory(lines):
                                     # CRITICAL FIX: Check if middle instruction modifies registers used by dest
                                     dest_regs = _extract_used_regs(dest)
                                     if not any(dreg in modified for dreg in dest_regs):
-                                        optimized.append(f"{indent}move{size} #{val},{dest}{comment3}")
-                                        i += 3
-                                        continue
+                                        if not _register_live_after(lines, i + 3, reg):
+                                            optimized.append(f"{indent}move{size} #{val},{dest}{comment3}")
+                                            i += 3
+                                            continue
 
         optimized.append(lines[i])
         i += 1
@@ -610,9 +647,10 @@ def _fold_clr_to_memory(lines):
                     size = m2.group(1)
                     dest = m2.group(2)
                     if not re.match(r"[da]\d+$", dest):
-                        optimized.append(f"{indent}move{size} #0,{dest}{comment2}")
-                        i += 2
-                        continue
+                        if not _register_live_after(lines, i + 2, reg):
+                            optimized.append(f"{indent}move{size} #0,{dest}{comment2}")
+                            i += 2
+                            continue
 
                 # One-gap variant
                 if i + 2 < len(lines):
@@ -635,9 +673,10 @@ def _fold_clr_to_memory(lines):
                                     dest_regs = _extract_used_regs(dest)
                                     # Check if any register used by dest is modified by middle instruction
                                     if not any(dreg in modified for dreg in dest_regs):
-                                        optimized.append(f"{indent}move{size} #0,{dest}{comment3}")
-                                        i += 3
-                                        continue
+                                        if not _register_live_after(lines, i + 3, reg):
+                                            optimized.append(f"{indent}move{size} #0,{dest}{comment3}")
+                                            i += 3
+                                            continue
 
         optimized.append(lines[i])
         i += 1

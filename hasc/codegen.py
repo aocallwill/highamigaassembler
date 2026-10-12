@@ -2794,6 +2794,10 @@ class CodeGen:
             return self._for_induction_reg_blocked(node.expr, var_name)
         if isinstance(node, ast.CompoundAssign) and node.target == var_name:
             return True
+        if isinstance(node, (ast.PostIncr, ast.PreIncr, ast.PostDecr, ast.PreDecr)):
+            if isinstance(node.operand, ast.VarRef) and node.operand.name == var_name:
+                return True
+            return self._for_induction_reg_blocked(node.operand, var_name)
         if isinstance(node, (list, tuple)):
             return any(self._for_induction_reg_blocked(item, var_name) for item in node)
         if hasattr(node, 'data') and hasattr(node, 'children'):
@@ -3594,14 +3598,17 @@ class CodeGen:
                     self.emit(indent + f"; for {stmt.var} kept in {ind_reg}")
 
             # Initialize: var = start
+            # When the induction value lives in Dn, do NOT also store to the frame
+            # here. A follow-up `move ind,frame` is folded by peephole into
+            # `move #imm,frame`, which deletes the live Dn load and leaves the
+            # loop comparing/indexing with garbage (broke jetpac lasers/meteors).
+            # Frame is written back at end_label instead.
             init_dest = ind_reg if ind_reg else "d0"
             code = self._emit_expr(stmt.start, params, locals_info, init_dest, target_type=vtype, frame_reg=frame_reg)
             for l in code:
                 for sub in str(l).splitlines():
                     self.emit(sub if sub.startswith(indent) else indent + sub)
-            if ind_reg:
-                self.emit(indent + f"move{suffix} {ind_reg},{frame_ea}")
-            else:
+            if not ind_reg:
                 self.emit(indent + f"move{suffix} d0,{frame_ea}")
 
             if dynamic_step:
