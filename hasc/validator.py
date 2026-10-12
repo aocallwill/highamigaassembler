@@ -171,6 +171,27 @@ class Validator:
                         self.extern_funcs[item.name] = params
                     else:
                         self.extern_funcs[item.name] = []
+
+        # Register #import labels as addressable globals (no XREF; INCLUDE supplies defs).
+        seen_import_labels = set()
+        for asset in getattr(self.module, "asset_imports", None) or []:
+            if asset.label in seen_import_labels:
+                self.errors.append(f"Duplicate #import label '{asset.label}'")
+                continue
+            seen_import_labels.add(asset.label)
+            if (
+                asset.label in self.globals
+                or asset.label in self.extern_vars
+                or asset.label in self.proc_funcs
+                or asset.label in self.extern_funcs
+                or asset.label in self.macros
+                or asset.label in self.constants
+            ):
+                self.errors.append(
+                    f"Imported asset label '{asset.label}' conflicts with an existing symbol"
+                )
+            else:
+                self.globals.add(asset.label)
         
         # Second pass: validate procedure bodies
         for item in self.module.items:

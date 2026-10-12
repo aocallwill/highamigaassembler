@@ -566,6 +566,9 @@ class CodeGen:
                         if size not in ('b', 'w', 'l'):
                             size = 'l'
                         globals_map[var.name] = {'size': size, 'signed': getattr(var, 'signed', False)}
+        # #import bob|palette labels: addressable symbols defined via INCLUDE at file end.
+        for asset in getattr(module, "asset_imports", None) or []:
+            globals_map.setdefault(asset.label, {'size': 'l', 'signed': False})
         return globals_map
 
     def _build_struct_info(self, module: ast.Module):
@@ -4516,10 +4519,25 @@ class CodeGen:
                         self._end_proc_regs(it.name)
 
         self._emit_interrupt_support()
+        self._emit_asset_includes()
 
         optimized_lines = peepholeopt.peephole_optimize(self.lines, self.target)
 
         return "\n".join(optimized_lines)
+
+    def _emit_asset_includes(self):
+        """Append vasm INCLUDE directives for #import-generated .s fragments."""
+        assets = getattr(self.module, "asset_imports", None) or []
+        if not assets:
+            return
+        from . import asset_import as asset_import_mod
+
+        output_path = getattr(self, "output_path", None)
+        self.emit("")
+        self.emit("; ---- #import bob|palette assets (auto-generated) ----")
+        for asset in assets:
+            inc = asset_import_mod.include_path_for_output(asset.gen_path, output_path)
+            self.emit(f'\tINCLUDE\t"{inc}"')
 
     def _emit_interrupt_support(self):
         """Emit the shared VBlank dispatch table + master ISR + starti/endi runtime

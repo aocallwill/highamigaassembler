@@ -49,6 +49,7 @@ If a feature cannot preserve predictable assembly behavior, it belongs in toolin
 - **Macro System**: Define reusable code patterns
 - **@python Directive**: Execute Python code during compilation
 - **Include System**: Modular code organization with `#include`
+- **Asset Import**: `#import bob|palette|sprite "file.png" as label …;` converts PNGs at compile time (via `tools/`), caches under `build/gen`, and `INCLUDE`s them into the output object — use `&label` with `CreateBob` / `LoadPalette` / `CreateSprite`
 - **Constants**: Compile-time constant evaluation
 - **Conditional Compilation**: `#ifdef`, `#ifndef`, `#else`, `#endif` gates using `const` values; `#if IDENT OP EXPR` for comparison-based gating (`==`/`=`, `!=`/`<>`, `>`, `<`, `>=`, `<=`)
 - **Pointer Arithmetic**: Address-of (`&`) and dereference (`*`) operators
@@ -701,7 +702,29 @@ This compiler is actively being developed. Current focus areas:
 
 ## 🛠️ Asset Conversion Tools
 
-The `tools/` directory contains Python utilities for converting graphics and assets into Amiga-compatible formats. All tools generate assembly `.s` files that can be included in your HAS projects using `#include` directives.
+The `tools/` directory contains Python utilities for converting graphics and assets into Amiga-compatible formats. All tools generate assembly `.s` files. Prefer in-language `#import` for single bob/palette assets; use the CLI tools for strips, atlases, and batch work.
+
+### In-language `#import` (bob / palette)
+
+```has
+#import bob "assets/player.png" as player_bob planes=5 add_word;
+#import palette "assets/sky.png" as sky_pal colors=32 dither=ordered;
+#import sprite "assets/bullet.png" as bullet;   // must be exactly 16px wide, 4 colours
+
+code main:
+    proc init() -> int {
+        var id: int = CreateBob(&player_bob, 1);
+        call LoadPalette(&sky_pal, 32);
+        call CreateSprite(0, &bullet);
+        return 0;
+    }
+```
+
+- Generates `.s` under `build/gen` (override with `--asset-outdir`); skips rebuild when cache is fresh (`--force-assets` to regenerate).
+- Requires Pillow only when an `#import` is present.
+- **bob:** `planes=1..5`, optional `add_word` (extra 16px word for blitter X-shift / cookie-cut).
+- **sprite:** fixed 2 bitplanes / 4 colours; PNG width must be exactly 16px (no silent resize).
+- **palette:** `colors=16|32` (or `planes=`); tiles/atlas strips stay as standalone tools.
 
 ### Graphics & Sprite Tools
 
@@ -718,6 +741,13 @@ The `tools/` directory contains Python utilities for converting graphics and ass
   - Configurable VSTART/VSTOP positions for vertical positioning
   - Example: `python3 tools/sprite_strip_importer.py explosion.png 32 --label-prefix explosion`
   - Documentation: [SPRITE_STRIP_IMPORTER.md](docs/SPRITE_STRIP_IMPORTER.md), [SPRITE_TOOLS_OVERVIEW.md](docs/SPRITE_TOOLS_OVERVIEW.md)
+
+- **`png_to_amiga_palette.py`** - Convert many-colour PNGs to Amiga 16/32-colour palettes
+  - Palette-first: emits `DC.W $0RGB` assembly for `LoadPalette` / `SetColor` (no planar packing)
+  - Optional mode-P preview PNG; dither modes `none` / `fs` / `ordered`
+  - `--index0 backdrop` for playfields, `--index0 transparent` for BOB/sprite-style masks
+  - Example: `python3 tools/png_to_amiga_palette.py art.png --colors 32 --palette-out art_palette.s --png-out art_32.png`
+  - Shared helpers: `tools/amiga_palette.py`
 
 - **`bob_importer.py`** - Convert PNG images to Amiga Blitter Objects (BOBs)
   - Output: Software sprites with any width and up to 32 colors (1-5 bitplanes configurable)

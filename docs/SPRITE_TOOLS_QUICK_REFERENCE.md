@@ -50,6 +50,54 @@ python3 tools/sprite_strip_importer.py explosion.png 32 --label-prefix expl --ou
 
 ---
 
+## `#import` (in-language bob / palette / sprite)
+
+```has
+#import bob "player.png" as player_bob planes=5 add_word;
+#import palette "sky.png" as sky_pal colors=32 dither=ordered;
+#import sprite "bullet.png" as bullet;   // exactly 16px wide, 4 colours / 2 planes
+```
+
+Compile with `hasc` (Pillow required). Generated files land in `build/gen`
+(`--asset-outdir` / `--force-assets`). Use `&label` with `CreateBob` /
+`LoadPalette` / `CreateSprite`.
+
+| Kind | Constraints |
+|------|-------------|
+| `bob` | `planes=1..5`; `add_word` adds +16px for blitter X-shift |
+| `palette` | `colors=16\|32` or `planes=` |
+| `sprite` | PNG width **must be 16**; fixed 2 planes / 4 colours |
+
+Strips, atlases, and tiles still use the CLI tools below.
+
+---
+
+## png_to_amiga_palette.py - Many-colour PNG → 16/32 palette
+
+### Basic Usage
+```bash
+python3 tools/png_to_amiga_palette.py <png_file> [--colors 16|32] [options]
+```
+
+### Common Options
+```bash
+--colors {2,4,8,16,32}   # Target colours (default: 32). Or use --planes 1..5
+--dither {none,fs,ordered}
+--index0 {backdrop,transparent,none}  # playfield vs mask slot 0
+--palette-out PATH       # Assembly palette .s
+--png-out PATH           # Mode-P preview PNG
+--match-palette PATH     # Remap onto existing palette .s
+--requantize             # Ignore source indexed palette
+```
+
+### Example
+```bash
+python3 tools/png_to_amiga_palette.py art.png --colors 32 \
+    --dither ordered --palette-out art_palette.s --png-out art_32.png
+```
+
+---
+
 ## bob_importer.py - Single BOB Converter
 
 ### Basic Usage

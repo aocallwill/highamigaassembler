@@ -6,6 +6,22 @@ All notable changes to the HAS (High Assembler) project will be documented in th
 
 ### Added
 
+- **`#import bob|palette|sprite` preprocessor directive:** compile-time PNG
+  import that runs `tools/bob_importer` / `tools/amiga_palette` /
+  `tools/sprite_importer`, caches generated `.s` under `build/gen` (CLI:
+  `--asset-outdir`, `--force-assets`), registers the `as` label for `&label`,
+  and appends vasm `INCLUDE` lines to the compiler output. Hardware sprites
+  require an exactly 16-pixel-wide PNG (2 planes / 4 colours). BOB imports
+  support `add_word` for blitter X-shift padding. Example:
+  `#import bob "player.png" as player_bob planes=5 add_word;`.
+
+- **PNG → Amiga 16/32-colour palette tool:** `tools/png_to_amiga_palette.py`
+  (helpers in `tools/amiga_palette.py`) converts many-colour PNGs to OCS/ECS
+  RGB4 palettes (`DC.W $0RGB`) for `LoadPalette` / `SetColor`, with optional
+  mode-P preview PNG, Floyd–Steinberg or ordered dither, and index-0
+  backdrop vs transparent policies. Prefer `--colors 32` for mode 0 and
+  `--colors 16` for hires.
+
 - **OS custom-screen graphics library (`lib/amiga_gfx.s`):** Intuition
   `OpenScreen` / RastPort draw / AllocRaster blit / SimpleSprites — separate
   from bare-metal `graphics.s` and Workbench `gui_intuition.s`. Contract:

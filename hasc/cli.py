@@ -146,6 +146,16 @@ def main(argv=None):
         default=True,
         help="Include HAS Build Statistics comment block in output assembly (default: enabled)",
     )
+    ap.add_argument(
+        "--asset-outdir",
+        default=None,
+        help="Directory for #import-generated .s files (default: build/gen)",
+    )
+    ap.add_argument(
+        "--force-assets",
+        action="store_true",
+        help="Regenerate #import assets even when the cache is fresh",
+    )
     args = ap.parse_args(argv)
     target = TargetSpec.for_cpu(args.cpu)
 
@@ -191,7 +201,12 @@ def main(argv=None):
         base_dir = None
         if not args.generate:
             base_dir = os.path.dirname(os.path.abspath(args.input))
-        mod = parser.parse(src, base_dir=base_dir)
+        mod = parser.parse(
+            src,
+            base_dir=base_dir,
+            asset_outdir=args.asset_outdir,
+            force_assets=args.force_assets,
+        )
     except SyntaxError as e:
         print(f"Error in {args.input}:", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
@@ -243,6 +258,7 @@ def main(argv=None):
         source_lines=src.splitlines(),
         annotate=args.annotate,
     )
+    cg.output_path = args.output
     try:
         asm = cg.gen()
     except codegen.CodeGenError as e:
