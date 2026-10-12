@@ -1,0 +1,34 @@
+// Compile/load regression: #import bob → CreateBob(&label).
+// Expectation (with graphics/heap linked at runtime):
+// - CreateBob returns a valid handle (not -1)
+// - DestroyBob cleans up
+// Compile-only: hasc must emit INCLUDE for the generated bob .s and lea of import_bob_player.
+
+#import bob "assets/import_bob_player.png" as import_bob_player planes=2 add_word;
+
+code main:
+    extern func CreateBob(descriptor_ptr: int, save_background: int) -> int;
+    extern func DestroyBob(handle: int) -> void;
+
+    asm {
+        jsr main
+        rts
+    }
+
+    proc main() -> int {
+        var bob: int;
+        var desc: int;
+
+        desc = &import_bob_player;
+        if (desc == 0) {
+            return -1;
+        }
+
+        bob = CreateBob(desc, 0);
+        if (bob == -1) {
+            return -10;
+        }
+
+        call DestroyBob(bob);
+        return 0;
+    }
