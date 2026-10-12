@@ -199,6 +199,6 @@ This is a significant improvement for functions called frequently in tight loops
 ## See Also
 
 - [Developer's Guide](DEVELOPERS_GUIDE.md)
-- [Procedure vs Function Summary](PROC_VS_FUNC_SUMMARY.md)
+- [`proc`, `func`, and `extern func` terminology](TERMINOLOGY.md)
 - [Compiler Developer's Guide](COMPILER_DEVELOPERS_GUIDE.md)
 - [Operators Reference](OPERATORS.md)

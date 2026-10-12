@@ -17,7 +17,7 @@ code vscode-highamigassembler
 |----------|-------------|---------|
 | **Ctrl+Click** | Jump to procedure definition | Ctrl+Click on `helper` name |
 | **F12** | Jump to procedure definition | Place cursor on `helper`, press F12 |
-| **Shift+F12** | Find all references | Place cursor on `helper`, show all uses |
+| **Shift+F12** | Scan references | Report raw count and open first match |
 
 ## What It Searches
 
@@ -80,8 +80,7 @@ vscode-highamigassembler/
 ├── package.json          ← Config (commands, keybindings)
 ├── README.md             ← Overview
 ├── SETUP_GUIDE.md        ← Installation steps
-├── FEATURES.md           ← Complete feature list
-└── IMPLEMENTATION.md     ← Developer details
+└── FEATURES.md           ← Feature behavior and limitations
 ```
 
 ## Development Quick Start
@@ -133,8 +132,8 @@ code --install-extension vscode-highamigassembler-0.1.0.vsix
 
 ```has
 proc helper() -> long { }        ← Ctrl+Click works
-func helper() -> long;           ← Ctrl+Click works
-extern func helper() -> long;    ← Ctrl+Click works
+func helper() -> long;           ← Hover works in the same file
+extern func helper() -> long;    ← Call may resolve to proc or assembly label
 
 helper();                        ← Shift+F12 finds this
 ```
@@ -164,19 +163,17 @@ my_helper();       // NO - different name
 helper_func();     // NO - different name
 ```
 
-## Performance
+## Search Limit
 
-- **Instant:** For most files (< 100ms)
-- **Limited to:** 100 files per search pattern
-- **Memory:** Minimal, no caching
-- **CPU:** Negligible impact
+Definition and reference searches inspect at most 100 files for each workspace
+glob used by the provider.
 
 ## Feature Matrix
 
 | Feature | Status | Shortcut |
 |---------|--------|----------|
 | Go to Definition | ✅ | F12, Ctrl+Click |
-| Find References | ✅ | Shift+F12 |
+| Reference scan, first-match jump | ✅ | Shift+F12 |
 | Hover Info | ✅ | Mouse hover |
 | Rename | 🔜 | Coming soon |
 | Autocomplete | 🔜 | Coming soon |
@@ -220,10 +217,13 @@ Position cursor on name → F12
        Ctrl+Click on name
 ```
 
-### See All Uses
+### Scan Uses
 ```
 Position cursor on name → Shift+F12
 ```
+
+The command reports a raw regex-match count and opens the first location. A
+declaration may be counted twice, and no result picker is shown.
 
 ### Quick Signature
 ```
@@ -248,7 +248,7 @@ Ctrl+Alt+Left (standard VS Code)
 
 1. **Hold Ctrl and click** for quickest navigation
 2. **Use F12** if your mouse is acting up
-3. **Shift+F12** to see code smell (many references = complex)
+3. **Shift+F12** to scan matching calls and declarations
 4. **Hover before clicking** to verify it's the right name
 5. **Use Ctrl+T** (if enabled) to search symbols workspace-wide
 
@@ -274,15 +274,6 @@ Test a file:
 4. **Regex Based** - Simple pattern matching, not full AST
 5. **Single Definition** - Jumps to first match, doesn't show choices
 
-## What's Next
-
-After installing:
-1. ✅ Try Ctrl+Click on a procedure
-2. ✅ Try F12 on a procedure name
-3. ✅ Try Shift+F12 to see references
-4. ✅ Hover to see signatures
-5. 🎉 Start using it in your projects!
-
 ## Support
 
 **Issue:** Something doesn't work  
@@ -298,8 +289,7 @@ After installing:
 - **Extension:** v0.1.0
 - **Requires:** VS Code 1.85+
 - **License:** MIT
-- **Status:** Stable, ready to use
 
 ---
 
-**TL;DR:** Ctrl+Click on procedure name to jump to its definition anywhere in your workspace! 🚀
+**TL;DR:** Ctrl+Click a procedure name to jump to its definition in the workspace.

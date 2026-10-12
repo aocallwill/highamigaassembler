@@ -46,7 +46,7 @@ python3 tools/bob_importer.py player.png 5 --label-prefix bob_player
 
 ---
 
-### bob_strip_importer.py ⭐ NEW
+### bob_strip_importer.py
 **Purpose**: Convert BOB strip images (animation frames) to individual Amiga BOBs  
 **Location**: `tools/bob_strip_importer.py`  
 **Documentation**: [BOB_STRIP_IMPORTER.md](BOB_STRIP_IMPORTER.md)

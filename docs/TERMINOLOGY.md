@@ -1,8 +1,9 @@
 # HAS Terminology: `proc` vs `func`
 
-## Decision: Keep Both Keywords
+## Declaration Forms
 
-We use **two distinct keywords** for function-related constructs:
+HAS uses distinct forms for definitions, forward declarations, and external
+declarations.
 
 ### `proc` - Procedure Definition
 - **Purpose**: Define a procedure/function with implementation
@@ -89,7 +90,7 @@ var y: long = process(my_function(1, 2));
 
 // Method 4: Call statement (return value in d0)
 call my_function(10, 20);
-var result: long = d0;
+var result: long = GetReg("d0");
 ```
 
 See `examples/func_vs_proc.md` for complete documentation.

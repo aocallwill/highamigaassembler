@@ -1,27 +1,19 @@
-﻿# Array Access Implementation Summary
+﻿# Array Access Code Generation
 
-## Changes Made
+## Compiler Pipeline
 
-### 1. AST Extension (`hasc/ast.py`)
-- Added `ArrayAccess` dataclass to represent array indexing operations
-- Supports both 1D (`arr[i]`) and 2D (`matrix[row][col]`) array access
+`hasc.ast.ArrayAccess` represents one- and two-dimensional indexing with a
+list of index expressions. The parser accepts chained subscripts, the validator
+checks the base and each index expression, and `hasc/codegen.py` records global
+array dimensions before emission.
 
-### 2. Grammar Extension (`hasc/parser.py`)
-- Added grammar rule: `CNAME ("[" expr "]")+ -> array_access`
-- Allows arbitrary expressions as array indices
-- Supports chained subscripts for multidimensional arrays
+Indexed reads, writes, address-of operations, typed-pointer access, and struct
+array member access use helpers in `hasc/codegen_indexed_address.py`. Those
+helpers delegate stride lowering to `hasc/indexed_address.py`, which returns a
+prelude and a final indexed operand. Keep both parts together when adding a new
+call site.
 
-### 3. Parser Transformer
-- Implemented `array_access()` transformer in `ASTBuilder`
-- Creates `ArrayAccess` nodes with name and list of index expressions
-
-### 4. Code Generation (`hasc/codegen.py`)
-
-#### Array Dimension Tracking
-- Added `_build_array_dimensions()` to collect global array dimensions
-- Stores dimensions in `self.array_dims` dictionary
-
-#### 1D Array Access
+## One-Dimensional Access
 ```m68k
 lea arrayname,a0           ; Load base address
 move.l index_expr,d1       ; Evaluate index
@@ -45,7 +37,7 @@ both any required prelude instructions and the final indexed operand; wrappers
 in `hasc/codegen_indexed_address.py` keep each code-generation path on that
 contract.
 
-### CPU-dependent lowering
+## CPU-Dependent Lowering
 
 The CLI accepts `--cpu 68000` and `--cpu 68020`, defaulting to `68000`. Index
 registers are long-sized (`dN.l`) by default. Scale factors `2`, `4`, and `8` are
@@ -94,7 +86,7 @@ python -m hasc.cli input.has --cpu 68020 -o /tmp/output-68020.s
 vasmm68k_mot -m68020 -Fhunkexe -o /tmp/output-68020.o /tmp/output-68020.s
 ```
 
-#### 2D Array Access
+## Two-Dimensional Access
 ```m68k
 ; Calculate: base + (row * col_count + col) * element_size
 move.l row_expr,d1         ; Evaluate row
@@ -114,7 +106,7 @@ shift or arithmetic fallback, while 68020 may use a legal scaled operand such
 as `(a0,d2.l*4)`. Row multiplication remains full-width and does not use
 `mulu.w`.
 
-### Narrow element extension rules
+## Narrow Element Extension Rules
 
 A `move.b`/`move.w` writes only the low 8 or 16 bits of the destination, so a
 byte- or word-sized element read must always be paired with an extension;
@@ -149,92 +141,31 @@ pointee type directly with `ast.is_signed()`.
 Regression coverage lives in `tests/test_narrow_element_reads.py` and
 `examples/tests/compiler/narrow_element_read_test.has`.
 
-### 5. Register Preservation Fixes
+## Register and Evaluation-Order Contract
 
-#### Problem Areas Fixed:
-1. **BinOp expressions**: Added `ArrayAccess` to complex expression check
-2. **Array access**: Removed unnecessary d0 preservation
-3. **2D arrays**: Use full-width shift/add multiplication with d3 as scratch
-4. **Call expressions**: Added proper result register handling
-
-#### Register Usage Strategy:
 - `d0`: Primary result register (reg_left)
 - `d1`: Secondary operand register (reg_right)
 - `d2`: Temp for 2D array calculations
+- `d3`: Scratch for full-width 2D row multiplication
 - `a0`: Address register for array base
 - Stack: Preserve left operand in complex binary operations
 
-### 6. Validator Updates (`hasc/validator.py`)
-- Added `ArrayAccess` validation
-- Validates all index expressions recursively
-- Fixed for-loop counter handling to avoid false duplicate errors
+Index expressions may contain calls. Emitters must evaluate a call-bearing
+index before loading a base address that the call could clobber. Stores must
+evaluate the right-hand side before forming the final destination address.
+Tests in `tests/test_codegen_basic.py` and
+`tests/test_codegen_68020_indexing.py` pin these ordering rules.
 
-## Test Files Created
+## Current Limits
 
-### `examples/tests/compiler/array_access_test.has`
-Basic array access tests:
-- 1D array with variable index
-- 2D array access
-- Constant indices
-- Array access in expressions
-
-### `examples/tests/compiler/array_comprehensive_test.has`
-Advanced tests:
-- Nested array access in complex expressions
-- Array access with function call results
-- Array access in loops
-- Register preservation with PUSH/POP
-
-## Generated Assembly Quality
-
-### Optimizations:
-[x] No unnecessary register preservation
-[x] Efficient indexed addressing modes, including legal 68020 scaled forms
-[x] Full-width 2D row multiplication with an explicit d3 scratch contract
-[x] Proper left-shift for scaling (faster than multiply)
-
-### Correct register preservation:
-[x] Binary operations preserve left operand when needed
-[x] Array access doesn't clobber d3-d7 or a2-a6
-[x] PUSH/POP properly saves/restores registers
-[x] Function calls preserve caller-save registers
-
-## Limitations & Future Work
-
-### Current Limitations:
-- Local arrays not yet supported (stack allocation needed)
-- Full-extension indexed addressing is enabled under `--cpu 68020` (Phase 1 of
-  `docs/CPU_68020_IMPLEMENTATION_PLAN.md`): scaled operands with displacements
-  outside the -128..127 brief range, such as `1000(a0,d1.l*4)`, are emitted
-  directly instead of falling back to explicit arithmetic. This is reachable
-  today for dynamic array/pointer indexing with large per-element strides (see
-  `examples/cpu68020_dynamic_large_index.has`). For struct-array field access,
-  *scaled* addressing (`*2`, `*4`, `*8` in the operand) is still only enabled
-  when the struct's total size is exactly 2, 4, or 8 bytes. However, field
-  displacement folding is no longer limited to those sizes: `emit_struct_array_read()`
-  and `emit_struct_array_store()` in `hasc/codegen_indexed_address.py` fold a
-  field's `field_offset` into the indexed operand's displacement for any
-  struct size, provided the offset fits the brief-displacement range or the
-  target supports full-extension addressing. This covers real-world structs
-  such as the 10-, 11-, and 29-byte `explosions`, `Enemy`, and `bullet` structs
-  in `examples/games/launchers/launchers.has`, eliminating one explicit
-  `add.l`-style instruction per field access on 68020. Memory-indirect forms
-  remain unimplemented.
-- `.w` index selection (Phase 2 of `docs/CPU_68020_IMPLEMENTATION_PLAN.md`) is
-  enabled only for compile-time-constant indexes within the signed 16-bit
-  range, and only at the four call sites listed above; non-constant indexes
-  and the excluded call sites (typed-pointer reads, address-of) keep the `.l`
-  index size.
-- Other 68020 instruction substitutions are not part of this target
-- 3D+ arrays not implemented
-- Array bounds checking not implemented
-
-### Future Enhancements:
-- Support different element sizes (.b, .w, .l)
-- Runtime bounds checking (optional)
-- Pointer arithmetic for array-like access
-- Array assignment: `arr[i] = value`
-- Local array support with stack allocation
+- Local arrays are not stack-allocated; array declarations are global.
+- Primitive arrays support up to two dimensions. Struct-array member access is
+  one-dimensional.
+- Array bounds are not checked at runtime.
+- 68020 memory-indirect indexed forms are not emitted.
+- On 68020, `.w` index selection is limited to compile-time constants in the
+  signed 16-bit range at the four call sites described above. Dynamic indexes,
+  typed-pointer reads, and address-of paths retain `.l` indexes.
 
 ## Examples
 
@@ -260,11 +191,20 @@ for i = 0 to 9 {
 }
 ```
 
-## Testing
+## Verification
 
-All tests compile successfully:
-- [x] `examples/tests/compiler/array_access_test.has` -> `array_access_test.s`
-- [x] `examples/tests/compiler/array_comprehensive_test.has` -> `array_comprehensive_test.s`
-- [x] `examples/add.has` (regression test) -> `t.s`
+Compile the language examples for both targets:
 
-Register preservation verified in generated assembly.
+```bash
+python -m hasc.cli examples/tests/compiler/array_access_test.has --cpu 68000 -o build/array_access_68000.s
+python -m hasc.cli examples/tests/compiler/array_access_test.has --cpu 68020 -o build/array_access_68020.s
+```
+
+Run the focused code-generation tests:
+
+```bash
+python -m pytest tests/test_codegen_basic.py tests/test_codegen_68020_indexing.py tests/test_narrow_element_reads.py
+```
+
+See [CPU 68020 Implementation Plan](CPU_68020_IMPLEMENTATION_PLAN.md) for the
+remaining target roadmap.

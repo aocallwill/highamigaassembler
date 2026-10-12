@@ -1037,6 +1037,9 @@ code math_safe:
 #pragma strict16arith(off);
 ```
 
+`#warning` emits a compile-time warning and compilation continues. `#error`
+emits a compile-time error and stops compilation.
+
 `strict16arith` defaults to `off`. On `--cpu 68000`, `*`, `/` and `%` use only
 the low word of each operand, so wider values are silently truncated at
 runtime; turning the pragma `on` makes that a compile-time error instead. The
@@ -1935,7 +1938,7 @@ cat out.s | head -50
 
 ## Additional Resources
 
-- [COMPILER_FEATURES_SUMMARY.md](COMPILER_FEATURES_SUMMARY.md) - Detailed feature breakdown
+- [README.md](../README.md) - Feature overview and project entry points
 - [examples/](../examples/) - 80+ working examples
 - [hasc/ast.py](../hasc/ast.py) - Complete type system
 - [hasc/codegen.py](../hasc/codegen.py) - Code generation patterns
