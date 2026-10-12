@@ -8,6 +8,7 @@ from . import codegen_indexed_address
 from . import indexed_address
 from .macro_expander import MacroExpander
 from .asm_substitution import substitute_asm_vars
+from .register_allocator import RegisterAllocator
 from .target import DEFAULT_TARGET, TargetSpec
 
 
@@ -44,6 +45,7 @@ class CodeGen:
         self.extern_vars = self._build_extern_vars(module)  # Collect external variables
         self.extern_funcs = self._build_extern_funcs(module)  # Collect external functions
         self.locked_regs = self._build_locked_regs(module)  # Collect locked registers from pragmas
+        self.reg_alloc = RegisterAllocator(locked_regs=self.locked_regs)
         self.strict_word_arith = self._build_strict_word_arith(module)
         self.interrupt_procs = self._build_interrupt_procs(module)  # {index: proc_name}, 0-15
         self.label_counter = 0
@@ -51,10 +53,34 @@ class CodeGen:
         self.push_stack = []  # Track PUSH/POP register lists
         self.loop_stack = []  # Stack of (continue_label, end_label) for nested loops
         self.dbra_depth = 0  # Nesting depth of active dbra-counter loops (RepeatLoop / fast-path ForLoop); they share d7
+        # Optional live local -> Dn map for for-loop induction register promotion (Phase 2c).
+        self.induction_regs = {}
 
     def _fail(self, message: str):
         """Abort codegen with a clear, user-facing error."""
         raise CodeGenError(message)
+
+    def _begin_proc_regs(self, proc_name: str):
+        """Reset scratch allocation state at procedure entry."""
+        self.reg_alloc.reset()
+        self.induction_regs = {}
+
+    def _end_proc_regs(self, proc_name: str):
+        """Assert all expression temps were freed (register leak detector)."""
+        try:
+            self.reg_alloc.assert_all_free(context=proc_name)
+        except RuntimeError as exc:
+            self._fail(str(exc))
+
+    def _alloc_data_temp(self, code, preferred=None):
+        """Allocate a data scratch; append any spill instructions to ``code``.
+
+        Returns the allocated register name. Caller must ``free`` it (and
+        eventually restore spills via ``restore_spills_since``).
+        """
+        reg, spill_code = self.reg_alloc.allocate_data(preferred=preferred)
+        code.extend(spill_code)
+        return reg
 
     def _fits_signed_word(self, value: int) -> bool:
         return -32768 <= value <= 32767
@@ -350,6 +376,47 @@ class CodeGen:
             if candidate != reg_left and candidate != reg_right:
                 return candidate
         raise CodeGenError("Unable to allocate scratch register for 32-bit divide remainder.")
+
+    def _mul_strength_shift(self, factor):
+        """Return (shift_count, negate) for factor in ±{2,4,8}, else None."""
+        if not isinstance(factor, int):
+            return None
+        negate = factor < 0
+        shifts = {2: 1, 4: 2, 8: 3}
+        mag = abs(factor)
+        if mag not in shifts:
+            return None
+        return shifts[mag], negate
+
+    def _emit_mul_strength(self, code, reg_left, factor: int) -> bool:
+        """Emit lsl(+neg) for * ±2/4/8 into reg_left. Returns True if applied."""
+        info = self._mul_strength_shift(factor)
+        if info is None:
+            return False
+        shift, negate = info
+        code.append(f"    lsl.l #{shift},{reg_left}")
+        if negate:
+            code.append(f"    neg.l {reg_left}")
+        return True
+
+    def _strength_reduce_mul_const(self, expr, reg_left, reg_right, code) -> bool:
+        """If either mul operand folds to ±2/4/8, emit shift(+neg). True when done."""
+        right_is_const, right_val = self._fold_constant(expr.right)
+        if right_is_const and isinstance(right_val, int):
+            return self._emit_mul_strength(code, reg_left, right_val)
+        left_is_const, left_val = self._fold_constant(expr.left)
+        if left_is_const and isinstance(left_val, int):
+            info = self._mul_strength_shift(left_val)
+            if info is None:
+                return False
+            shift, negate = info
+            # Left was the constant; right holds the variable factor.
+            code.append(f"    move.l {reg_right},{reg_left}")
+            code.append(f"    lsl.l #{shift},{reg_left}")
+            if negate:
+                code.append(f"    neg.l {reg_left}")
+            return True
+        return False
 
     def _is_unsigned_expr(self, expr, locals_info, params=None) -> bool:
         """Best-effort check if expr should be treated as unsigned for comparisons.
@@ -1122,6 +1189,13 @@ class CodeGen:
                 const_value = self.constants[name]
                 return [f"    move.l #{const_value},{reg_left}"]
 
+            # Live for-loop induction register (Phase 2c): avoid frame reload.
+            if name in self.induction_regs:
+                ind = self.induction_regs[name]
+                if ind != reg_left:
+                    return [f"    move.l {ind},{reg_left}"]
+                return []
+
             # Check if it's a local variable first (this includes saved register parameters)
             local_info = next((l for l in locals_info if l[0] == name), None)
             if local_info:
@@ -1388,9 +1462,10 @@ class CodeGen:
             # Evaluate left side into reg_left
             code += self._emit_expr(expr.left, params, locals_info, reg_left, reg_right, target_type=target_type, frame_reg=frame_reg)
 
-            # Fast path: immediate operations when right is a constant
-            if isinstance(expr.right, ast.Number):
-                imm = expr.right.value
+            # Fast path: immediate operations when right folds to a constant
+            # (covers Number and UnaryOp('-', Number(...)) etc.).
+            right_is_const, imm = self._fold_constant(expr.right)
+            if right_is_const and isinstance(imm, int):
                 # Addition with immediate
                 if expr.op == '+':
                     # Avoid evaluating right; emit add immediate directly
@@ -1406,6 +1481,9 @@ class CodeGen:
                     else:
                         code.append(f"    sub.l #{imm},{reg_left}")
                     return code
+                # Strength-reduce multiply by ±2/4/8 before muls/mulu
+                if expr.op == '*' and self._emit_mul_strength(code, reg_left, imm):
+                    return code
                 # Bitwise AND with immediate
                 if expr.op == '&':
                     code.append(f"    andi.l #{imm},{reg_left}")
@@ -1420,7 +1498,7 @@ class CodeGen:
                     return code
                 # Shifts with immediate counts
                 if expr.op == '<<':
-                    shift = imm if isinstance(imm, int) else 0
+                    shift = imm
                     if shift <= 8:
                         code.append(f"    lsl.l #{shift},{reg_left}")
                     else:
@@ -1432,7 +1510,7 @@ class CodeGen:
                             code.append(f"    lsl.l #{rem},{reg_left}")
                     return code
                 if expr.op == '>>':
-                    shift = imm if isinstance(imm, int) else 0
+                    shift = imm
                     if shift <= 8:
                         code.append(f"    asr.l #{shift},{reg_left}")
                     else:
@@ -1443,162 +1521,219 @@ class CodeGen:
                             code.append(f"    asr.l #{rem},{reg_left}")
                     return code
 
-            if right_is_complex:
-                # Save left result to stack before evaluating complex right side
-                code.append(f"    move.l {reg_left},-(a7)  ; preserve left operand")
+            # Fast path: constant * var  (e.g. 4 * x / -2 * x) -> eval var then shift
+            left_is_const, left_imm = self._fold_constant(expr.left)
+            if (expr.op == '*' and left_is_const and isinstance(left_imm, int)
+                    and self._mul_strength_shift(left_imm) is not None):
+                code += self._emit_expr(
+                    expr.right, params, locals_info, reg_left, reg_right,
+                    target_type=target_type, frame_reg=frame_reg)
+                self._emit_mul_strength(code, reg_left, left_imm)
+                return code
 
-            # Evaluate right side into reg_right
-            # Choose a temp register distinct from reg_right to avoid clobbering when
-            # the right side itself is a BinOp (e.g., ex + 16). Previously, using
-            # reg_right == "d2" together with temp "d2" caused both operands to use
-            # the same register, leading to incorrect sequences like `add.l d2,d2`.
-            temp_right = "d2" if reg_right != "d2" else "d1"
-            code += self._emit_expr(expr.right, params, locals_info, reg_right, temp_right, target_type=target_type, frame_reg=frame_reg)
+            # Evaluate right side. Prefer free Dn (via RegisterAllocator) over
+            # ad-hoc stack spills when the right operand is complex and would
+            # otherwise clobber reg_left through nested d0/d1 defaults.
+            spill_depth = len(self.reg_alloc.spilled_stack)
+            allocated_temps = []
+            marked = []
 
-            if right_is_complex:
-                # Restore left result from stack
-                code.append(f"    move.l (a7)+,{reg_left}  ; restore left operand")
+            def _alloc_temp(preferred=None):
+                reg = self._alloc_data_temp(code, preferred=preferred)
+                allocated_temps.append(reg)
+                return reg
 
-            # Perform the operation
-            if expr.op == '+':
-                code.append(f"    add.l {reg_right},{reg_left}")
-            elif expr.op == '-':
-                code.append(f"    sub.l {reg_right},{reg_left}")
-            elif expr.op == '*':
-                unsigned_arith = self._is_unsigned_arith_pair(expr.left, expr.right, locals_info, params)
-                if self.target.supports_32bit_muldiv:
-                    if unsigned_arith:
-                        # 68020 native 32x32 -> 32 unsigned multiply.
-                        code.append(f"    mulu.l {reg_right},{reg_left}")
+            def _mark(reg):
+                if reg and reg not in marked:
+                    self.reg_alloc.mark_in_use(reg)
+                    marked.append(reg)
+
+            try:
+                _mark(reg_left)
+                if right_is_complex:
+                    # Prefer d3-d6 so nested hardcoded d0-d2 temps cannot clobber
+                    # the preserved left; fall back to stack when high regs are busy.
+                    preserve_reg, _ = self.reg_alloc.try_allocate_preserve()
+                    if preserve_reg:
+                        allocated_temps.append(preserve_reg)
+                        code.append(f"    move.l {reg_left},{preserve_reg}  ; preserve left operand")
                     else:
-                        # 68020 native 32x32 -> 32 signed multiply; no 16-bit range limit.
-                        code.append(f"    muls.l {reg_right},{reg_left}")
-                elif unsigned_arith:
-                    # Unsigned 16x16 -> 32 multiply; no sign normalization (zero-extension applies).
-                    self._require_unsigned_word_arith_operand(expr.left, 'multiplication', 'left', locals_info, params)
-                    self._require_unsigned_word_arith_operand(expr.right, 'multiplication', 'right', locals_info, params)
-                    code.append(f"    mulu.w {reg_right},{reg_left}")
-                else:
-                    # Use signed 16x16 -> 32 multiply for int arithmetic on 68000
-                    # Assumes operands fit in 16 bits; result in reg_left (32-bit)
-                    self._require_word_arith_operand(expr.left, 'multiplication', 'left', locals_info, params)
-                    self._require_word_arith_operand(expr.right, 'multiplication', 'right', locals_info, params)
-                    # muls.w reads only the low word of both operands and overwrites all
-                    # 32 bits of the destination, so pre-normalizing with ext.l is inert.
-                    code.append(f"    muls.w {reg_right},{reg_left}")
-            elif expr.op == '/':
-                if isinstance(expr.right, ast.Number) and expr.right.value == 0:
-                    self._fail("Division by zero constant in expression.")
-                unsigned_arith = self._is_unsigned_arith_pair(expr.left, expr.right, locals_info, params)
-                if self.target.supports_32bit_muldiv:
-                    rem_reg = self._muldiv_remainder_reg(reg_left, reg_right)
-                    if unsigned_arith:
-                        # 68020 native 32/32 -> 32 unsigned divide.
-                        code.append(f"    divul.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit unsigned divide, quotient in {reg_left}")
+                        code.append(f"    move.l {reg_left},-(a7)  ; preserve left operand")
+                    preferred_right = None
+                    if reg_right and reg_right not in (None, 'None', preserve_reg, reg_left):
+                        preferred_right = reg_right
+                    right_dest = _alloc_temp(preferred=preferred_right)
+                    temp_right = _alloc_temp()
+                    code += self._emit_expr(
+                        expr.right, params, locals_info, right_dest, temp_right,
+                        target_type=target_type, frame_reg=frame_reg)
+                    if preserve_reg:
+                        code.append(f"    move.l {preserve_reg},{reg_left}  ; restore left operand")
                     else:
-                        # 68020 native 32/32 -> 32 signed divide; no 16-bit range limit.
-                        code.append(f"    divsl.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit signed divide, quotient in {reg_left}")
-                elif unsigned_arith:
-                    # Unsigned 32/16 divide; divisor keeps its zero-extended low word.
-                    self._require_unsigned_word_arith_operand(expr.right, 'division', 'right', locals_info, params)
-                    code.append(f"    divu.w {reg_right},{reg_left}")
-                    code.append(f"    andi.l #$FFFF,{reg_left}  ; isolate quotient and clear remainder word")
+                        code.append(f"    move.l (a7)+,{reg_left}  ; restore left operand")
+                    reg_right = right_dest
                 else:
-                    # Use DIVS.W for signed division. Do not rewrite to ASR for powers
-                    # of two because ASR rounds negative values differently than DIVS.
-                    self._require_word_arith_operand(expr.right, 'division', 'right', locals_info, params)
-                    # divs.w reads only the low word of the divisor, so normalizing it is inert.
-                    code.append(f"    divs.w {reg_right},{reg_left}")
-                    code.append(f"    ext.l {reg_left}  ; isolate quotient and clear remainder word")
-            elif expr.op == '%':
-                if isinstance(expr.right, ast.Number) and expr.right.value == 0:
-                    self._fail("Modulo by zero constant in expression.")
-                unsigned_arith = self._is_unsigned_arith_pair(expr.left, expr.right, locals_info, params)
-                if self.target.supports_32bit_muldiv:
-                    rem_reg = self._muldiv_remainder_reg(reg_left, reg_right)
-                    if unsigned_arith:
-                        # 68020 native 32/32 -> 32 unsigned divide; remainder captured directly.
-                        code.append(f"    divul.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit unsigned divide, remainder in {rem_reg}")
+                    if not reg_right or reg_right in (None, 'None') or reg_right == reg_left:
+                        reg_right = _alloc_temp(preferred="d1" if reg_left != "d1" else "d2")
                     else:
-                        # 68020 native 32/32 -> 32 signed divide; remainder captured directly.
-                        code.append(f"    divsl.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit signed divide, remainder in {rem_reg}")
-                    code.append(f"    move.l {rem_reg},{reg_left}  ; result = remainder")
-                elif unsigned_arith:
-                    # Modulo - after divu.w, remainder is in upper word
-                    self._require_unsigned_word_arith_operand(expr.right, 'modulo', 'right', locals_info, params)
-                    code.append(f"    divu.w {reg_right},{reg_left}")
-                    code.append(f"    swap {reg_left}  ; get remainder")
-                    code.append(f"    andi.l #$FFFF,{reg_left}  ; zero-extend remainder")
-                else:
-                    # Modulo - after divs.w, remainder is in upper word
-                    self._require_word_arith_operand(expr.right, 'modulo', 'right', locals_info, params)
-                    # divs.w reads only the low word of the divisor, so normalizing it is inert.
-                    code.append(f"    divs.w {reg_right},{reg_left}")
-                    code.append(f"    swap {reg_left}  ; get remainder")
-                    code.append(f"    ext.l {reg_left}  ; sign-extend")
-            elif expr.op == '==':
-                # Equal: result is 1 if equal, 0 if not
-                code.append(f"    cmp.l {reg_right},{reg_left}")
-                code.append(f"    seq {reg_left}  ; set byte if equal")
-                code.append(f"    andi.l #$FF,{reg_left}")
-                code.append(f"    neg.b {reg_left}  ; convert FF to 01")
-            elif expr.op == '!=':
-                # Not equal
-                code.append(f"    cmp.l {reg_right},{reg_left}")
-                code.append(f"    sne {reg_left}  ; set byte if not equal")
-                code.append(f"    andi.l #$FF,{reg_left}")
-                code.append(f"    neg.b {reg_left}")
-            elif expr.op == '<':
-                # Less than (signed/unsigned)
-                code.append(f"    cmp.l {reg_right},{reg_left}")
-                if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
-                    code.append(f"    slo {reg_left}  ; set byte if lower (unsigned)")
-                else:
-                    code.append(f"    slt {reg_left}  ; set byte if less")
-                code.append(f"    andi.l #$FF,{reg_left}")
-                code.append(f"    neg.b {reg_left}")
-            elif expr.op == '<=':
-                # Less or equal (signed/unsigned)
-                code.append(f"    cmp.l {reg_right},{reg_left}")
-                if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
-                    code.append(f"    sls {reg_left}  ; set byte if lower or same (unsigned)")
-                else:
-                    code.append(f"    sle {reg_left}  ; set byte if less or equal")
-                code.append(f"    andi.l #$FF,{reg_left}")
-                code.append(f"    neg.b {reg_left}")
-            elif expr.op == '>':
-                # Greater than (signed/unsigned)
-                code.append(f"    cmp.l {reg_right},{reg_left}")
-                if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
-                    code.append(f"    shi {reg_left}  ; set byte if higher (unsigned)")
-                else:
-                    code.append(f"    sgt {reg_left}  ; set byte if greater")
-                code.append(f"    andi.l #$FF,{reg_left}")
-                code.append(f"    neg.b {reg_left}")
-            elif expr.op == '>=':
-                # Greater or equal (signed/unsigned)
-                code.append(f"    cmp.l {reg_right},{reg_left}")
-                if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
-                    code.append(f"    shs {reg_left}  ; set byte if same or higher (unsigned)")
-                else:
-                    code.append(f"    sge {reg_left}  ; set byte if greater or equal")
-                code.append(f"    andi.l #$FF,{reg_left}")
-                code.append(f"    neg.b {reg_left}")
-            elif expr.op == '&':
-                # Bitwise AND
-                code.append(f"    and.l {reg_right},{reg_left}")
-            elif expr.op == '|':
-                # Bitwise OR
-                code.append(f"    or.l {reg_right},{reg_left}")
-            elif expr.op == '^':
-                # Bitwise XOR
-                code.append(f"    eor.l {reg_right},{reg_left}")
-            elif expr.op == '<<':
-                # Left shift (logical shift left)
-                code.append(f"    lsl.l {reg_right},{reg_left}")
-            elif expr.op == '>>':
-                # Right shift (arithmetic shift right - sign-extends)
-                code.append(f"    asr.l {reg_right},{reg_left}")
+                        _mark(reg_right)
+                    preferred_temp = "d2"
+                    if preferred_temp in (reg_left, reg_right):
+                        preferred_temp = None
+                    temp_right = _alloc_temp(preferred=preferred_temp)
+                    code += self._emit_expr(
+                        expr.right, params, locals_info, reg_right, temp_right,
+                        target_type=target_type, frame_reg=frame_reg)
+
+                # Perform the operation
+                if expr.op == '+':
+                    code.append(f"    add.l {reg_right},{reg_left}")
+                elif expr.op == '-':
+                    code.append(f"    sub.l {reg_right},{reg_left}")
+                elif expr.op == '*':
+                    # Strength-reduce * ±2/4/8 to shifts before word/long multiply.
+                    strength = self._strength_reduce_mul_const(expr, reg_left, reg_right, code)
+                    if not strength:
+                        unsigned_arith = self._is_unsigned_arith_pair(expr.left, expr.right, locals_info, params)
+                        if self.target.supports_32bit_muldiv:
+                            if unsigned_arith:
+                                # 68020 native 32x32 -> 32 unsigned multiply.
+                                code.append(f"    mulu.l {reg_right},{reg_left}")
+                            else:
+                                # 68020 native 32x32 -> 32 signed multiply; no 16-bit range limit.
+                                code.append(f"    muls.l {reg_right},{reg_left}")
+                        elif unsigned_arith:
+                            # Unsigned 16x16 -> 32 multiply; no sign normalization (zero-extension applies).
+                            self._require_unsigned_word_arith_operand(expr.left, 'multiplication', 'left', locals_info, params)
+                            self._require_unsigned_word_arith_operand(expr.right, 'multiplication', 'right', locals_info, params)
+                            code.append(f"    mulu.w {reg_right},{reg_left}")
+                        else:
+                            # Use signed 16x16 -> 32 multiply for int arithmetic on 68000
+                            # Assumes operands fit in 16 bits; result in reg_left (32-bit)
+                            self._require_word_arith_operand(expr.left, 'multiplication', 'left', locals_info, params)
+                            self._require_word_arith_operand(expr.right, 'multiplication', 'right', locals_info, params)
+                            # muls.w reads only the low word of both operands and overwrites all
+                            # 32 bits of the destination, so pre-normalizing with ext.l is inert.
+                            code.append(f"    muls.w {reg_right},{reg_left}")
+                elif expr.op == '/':
+                    if isinstance(expr.right, ast.Number) and expr.right.value == 0:
+                        self._fail("Division by zero constant in expression.")
+                    unsigned_arith = self._is_unsigned_arith_pair(expr.left, expr.right, locals_info, params)
+                    if self.target.supports_32bit_muldiv:
+                        rem_reg = self._muldiv_remainder_reg(reg_left, reg_right)
+                        if unsigned_arith:
+                            # 68020 native 32/32 -> 32 unsigned divide.
+                            code.append(f"    divul.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit unsigned divide, quotient in {reg_left}")
+                        else:
+                            # 68020 native 32/32 -> 32 signed divide; no 16-bit range limit.
+                            code.append(f"    divsl.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit signed divide, quotient in {reg_left}")
+                    elif unsigned_arith:
+                        # Unsigned 32/16 divide; divisor keeps its zero-extended low word.
+                        self._require_unsigned_word_arith_operand(expr.right, 'division', 'right', locals_info, params)
+                        code.append(f"    divu.w {reg_right},{reg_left}")
+                        code.append(f"    andi.l #$FFFF,{reg_left}  ; isolate quotient and clear remainder word")
+                    else:
+                        # Use DIVS.W for signed division. Do not rewrite to ASR for powers
+                        # of two because ASR rounds negative values differently than DIVS.
+                        self._require_word_arith_operand(expr.right, 'division', 'right', locals_info, params)
+                        # divs.w reads only the low word of the divisor, so normalizing it is inert.
+                        code.append(f"    divs.w {reg_right},{reg_left}")
+                        code.append(f"    ext.l {reg_left}  ; isolate quotient and clear remainder word")
+                elif expr.op == '%':
+                    if isinstance(expr.right, ast.Number) and expr.right.value == 0:
+                        self._fail("Modulo by zero constant in expression.")
+                    unsigned_arith = self._is_unsigned_arith_pair(expr.left, expr.right, locals_info, params)
+                    if self.target.supports_32bit_muldiv:
+                        rem_reg = self._muldiv_remainder_reg(reg_left, reg_right)
+                        if unsigned_arith:
+                            # 68020 native 32/32 -> 32 unsigned divide; remainder captured directly.
+                            code.append(f"    divul.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit unsigned divide, remainder in {rem_reg}")
+                        else:
+                            # 68020 native 32/32 -> 32 signed divide; remainder captured directly.
+                            code.append(f"    divsl.l {reg_right},{rem_reg}:{reg_left}  ; 32-bit signed divide, remainder in {rem_reg}")
+                        code.append(f"    move.l {rem_reg},{reg_left}  ; result = remainder")
+                    elif unsigned_arith:
+                        # Modulo - after divu.w, remainder is in upper word
+                        self._require_unsigned_word_arith_operand(expr.right, 'modulo', 'right', locals_info, params)
+                        code.append(f"    divu.w {reg_right},{reg_left}")
+                        code.append(f"    swap {reg_left}  ; get remainder")
+                        code.append(f"    andi.l #$FFFF,{reg_left}  ; zero-extend remainder")
+                    else:
+                        # Modulo - after divs.w, remainder is in upper word
+                        self._require_word_arith_operand(expr.right, 'modulo', 'right', locals_info, params)
+                        # divs.w reads only the low word of the divisor, so normalizing it is inert.
+                        code.append(f"    divs.w {reg_right},{reg_left}")
+                        code.append(f"    swap {reg_left}  ; get remainder")
+                        code.append(f"    ext.l {reg_left}  ; sign-extend")
+                elif expr.op == '==':
+                    # Equal: result is 1 if equal, 0 if not
+                    code.append(f"    cmp.l {reg_right},{reg_left}")
+                    code.append(f"    seq {reg_left}  ; set byte if equal")
+                    code.append(f"    andi.l #$FF,{reg_left}")
+                    code.append(f"    neg.b {reg_left}  ; convert FF to 01")
+                elif expr.op == '!=':
+                    # Not equal
+                    code.append(f"    cmp.l {reg_right},{reg_left}")
+                    code.append(f"    sne {reg_left}  ; set byte if not equal")
+                    code.append(f"    andi.l #$FF,{reg_left}")
+                    code.append(f"    neg.b {reg_left}")
+                elif expr.op == '<':
+                    # Less than (signed/unsigned)
+                    code.append(f"    cmp.l {reg_right},{reg_left}")
+                    if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
+                        code.append(f"    slo {reg_left}  ; set byte if lower (unsigned)")
+                    else:
+                        code.append(f"    slt {reg_left}  ; set byte if less")
+                    code.append(f"    andi.l #$FF,{reg_left}")
+                    code.append(f"    neg.b {reg_left}")
+                elif expr.op == '<=':
+                    # Less or equal (signed/unsigned)
+                    code.append(f"    cmp.l {reg_right},{reg_left}")
+                    if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
+                        code.append(f"    sls {reg_left}  ; set byte if lower or same (unsigned)")
+                    else:
+                        code.append(f"    sle {reg_left}  ; set byte if less or equal")
+                    code.append(f"    andi.l #$FF,{reg_left}")
+                    code.append(f"    neg.b {reg_left}")
+                elif expr.op == '>':
+                    # Greater than (signed/unsigned)
+                    code.append(f"    cmp.l {reg_right},{reg_left}")
+                    if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
+                        code.append(f"    shi {reg_left}  ; set byte if higher (unsigned)")
+                    else:
+                        code.append(f"    sgt {reg_left}  ; set byte if greater")
+                    code.append(f"    andi.l #$FF,{reg_left}")
+                    code.append(f"    neg.b {reg_left}")
+                elif expr.op == '>=':
+                    # Greater or equal (signed/unsigned)
+                    code.append(f"    cmp.l {reg_right},{reg_left}")
+                    if self._is_unsigned_expr(expr.left, locals_info, params) or self._is_unsigned_expr(expr.right, locals_info, params):
+                        code.append(f"    shs {reg_left}  ; set byte if same or higher (unsigned)")
+                    else:
+                        code.append(f"    sge {reg_left}  ; set byte if greater or equal")
+                    code.append(f"    andi.l #$FF,{reg_left}")
+                    code.append(f"    neg.b {reg_left}")
+                elif expr.op == '&':
+                    # Bitwise AND
+                    code.append(f"    and.l {reg_right},{reg_left}")
+                elif expr.op == '|':
+                    # Bitwise OR
+                    code.append(f"    or.l {reg_right},{reg_left}")
+                elif expr.op == '^':
+                    # Bitwise XOR
+                    code.append(f"    eor.l {reg_right},{reg_left}")
+                elif expr.op == '<<':
+                    # Left shift (logical shift left)
+                    code.append(f"    lsl.l {reg_right},{reg_left}")
+                elif expr.op == '>>':
+                    # Right shift (arithmetic shift right - sign-extends)
+                    code.append(f"    asr.l {reg_right},{reg_left}")
+            finally:
+                for reg in reversed(allocated_temps):
+                    self.reg_alloc.free(reg)
+                for reg in marked:
+                    self.reg_alloc.unmark(reg)
+                code.extend(self.reg_alloc.restore_spills_since(spill_depth))
             return code
         if isinstance(expr, ast.UnaryOp):
             code = []
@@ -2581,6 +2716,95 @@ class CodeGen:
         self._emit_stmt(synthetic_assign, params, locals_info, proc, indent, is_void, frame_reg=frame_reg)
         return True
 
+    def _try_emit_compound_rmw(self, stmt, ea, suffix, indent, params, locals_info, vtype, frame_reg):
+        """Emit memory RMW for simple compound assigns. Returns True if handled.
+
+        Handles ``+=``/``-=`` with small immediates via addq/subq, other immediate
+        ``+=``/``-=``/``&=``/``|=``/``^=`` via op-to-memory, and skips mul/div/mod.
+        """
+        if stmt.op in ('*=', '/=', '%='):
+            return False
+        op_map = {
+            '+=': 'add',
+            '-=': 'sub',
+            '&=': 'and',
+            '|=': 'or',
+            '^=': 'eor',
+        }
+        instr = op_map.get(stmt.op)
+        if instr is None:
+            return False
+
+        if isinstance(stmt.expr, ast.Number) and isinstance(stmt.expr.value, int):
+            imm = stmt.expr.value
+            if stmt.op in ('+=', '-=') and 1 <= imm <= 8:
+                qop = 'addq' if stmt.op == '+=' else 'subq'
+                self.emit(indent + f"{qop}{suffix} #{imm},{ea}")
+                return True
+            if stmt.op == '+=':
+                self.emit(indent + f"add{suffix} #{imm},{ea}")
+                return True
+            if stmt.op == '-=':
+                self.emit(indent + f"sub{suffix} #{imm},{ea}")
+                return True
+            if stmt.op == '&=':
+                self.emit(indent + f"andi{suffix} #{imm},{ea}")
+                return True
+            if stmt.op == '|=':
+                self.emit(indent + f"ori{suffix} #{imm},{ea}")
+                return True
+            if stmt.op == '^=':
+                self.emit(indent + f"eori{suffix} #{imm},{ea}")
+                return True
+
+        # Simple RHS already in a data register is uncommon; evaluate to d1 then
+        # op memory directly (still one fewer load of the destination).
+        if isinstance(stmt.expr, (ast.VarRef, ast.Number)):
+            code = self._emit_expr(stmt.expr, params, locals_info, reg_left="d1", target_type=vtype, frame_reg=frame_reg)
+            for l in code:
+                for sub in str(l).splitlines():
+                    self.emit(sub if sub.startswith(indent) else indent + sub)
+            self.emit(indent + f"{instr}{suffix} d1,{ea}")
+            return True
+        return False
+
+    def _for_induction_reg_blocked(self, node, var_name):
+        """True when body is unsafe for keeping induction var ``var_name`` in a Dn.
+
+        Blocks: calls/macros, address-of the var, assignments/compound assigns to
+        the var, and asm that names the var. Reads of the var are allowed.
+        """
+        if node is None:
+            return False
+        node = self._normalize_expr(node)
+        if isinstance(node, (ast.MacroCall, ast.CallStmt, ast.Call)):
+            return True
+        if isinstance(node, ast.AsmBlock):
+            return re.search(rf'\b{re.escape(var_name)}\b', node.content or '') is not None
+        if isinstance(node, ast.UnaryOp) and node.op == '&':
+            if isinstance(node.operand, ast.VarRef) and node.operand.name == var_name:
+                return True
+            return self._for_induction_reg_blocked(node.operand, var_name)
+        if isinstance(node, ast.Assign):
+            target = node.target
+            if isinstance(target, str) and target == var_name:
+                return True
+            if self._for_induction_reg_blocked(target, var_name):
+                return True
+            return self._for_induction_reg_blocked(node.expr, var_name)
+        if isinstance(node, ast.CompoundAssign) and node.target == var_name:
+            return True
+        if isinstance(node, (list, tuple)):
+            return any(self._for_induction_reg_blocked(item, var_name) for item in node)
+        if hasattr(node, 'data') and hasattr(node, 'children'):
+            return any(self._for_induction_reg_blocked(child, var_name) for child in node.children)
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            return any(
+                self._for_induction_reg_blocked(getattr(node, f.name), var_name)
+                for f in dataclasses.fields(node)
+            )
+        return False
+
     def _dbra_loop_enter(self, indent):
         """Reserve d7 for a dbra loop counter (RepeatLoop or the ForLoop fast path below).
         CodeGen owns d7 for this purpose: all active dbra-counter loops share that single
@@ -3032,6 +3256,7 @@ class CodeGen:
                 name, vtype, offset = local_info
                 size = ast.type_size(vtype) if vtype else 4
                 suffix = ast.size_suffix(size)
+                ea = f"{-offset}({frame_reg})"
 
                 # Reuse the normal binary-expression lowering for operators that
                 # need 68000-specific handling (e.g. muls.w/divs.w instead of .l).
@@ -3041,7 +3266,11 @@ class CodeGen:
                     for l in code:
                         for sub in str(l).splitlines():
                             self.emit(sub if sub.startswith(indent) else indent + sub)
-                    self.emit(indent + f"move{suffix} d0,{-offset}({frame_reg})")
+                    self.emit(indent + f"move{suffix} d0,{ea}")
+                    return
+
+                # Memory RMW for simple immediate compound ops (no load/op/store).
+                if self._try_emit_compound_rmw(stmt, ea, suffix, indent, params, locals_info, vtype, frame_reg):
                     return
 
                 # Evaluate right side into d1
@@ -3051,7 +3280,7 @@ class CodeGen:
                         self.emit(sub if sub.startswith(indent) else indent + sub)
 
                 # Load current value into d0
-                self.emit(indent + f"move{suffix} {-offset}({frame_reg}),d0")
+                self.emit(indent + f"move{suffix} {ea},d0")
 
                 # Perform the compound operation
                 op_map = {
@@ -3074,7 +3303,29 @@ class CodeGen:
                     self.emit(indent + f"{instr}{suffix} d1,d0")
 
                 # Store result back
-                self.emit(indent + f"move{suffix} d0,{-offset}({frame_reg})")
+                self.emit(indent + f"move{suffix} d0,{ea}")
+            elif isinstance(target, str) and target in self.globals:
+                size_code = self.globals.get(target, {'size': 'l', 'signed': False})['size']
+                suffix = { 'b': '.b', 'w': '.w', 'l': '.l' }.get(size_code, '.l')
+                if stmt.op in ('*=', '/=', '%='):
+                    compound_expr = ast.BinOp(stmt.op[:-1], ast.VarRef(target), stmt.expr)
+                    code = self._emit_expr(compound_expr, params, locals_info, reg_left="d0", reg_right="d1", frame_reg=frame_reg)
+                    for l in code:
+                        for sub in str(l).splitlines():
+                            self.emit(sub if sub.startswith(indent) else indent + sub)
+                    self.emit(indent + f"move{suffix} d0,{target}")
+                    return
+                if self._try_emit_compound_rmw(stmt, target, suffix, indent, params, locals_info, None, frame_reg):
+                    return
+                code = self._emit_expr(stmt.expr, params, locals_info, reg_left="d1", frame_reg=frame_reg)
+                for l in code:
+                    for sub in str(l).splitlines():
+                        self.emit(sub if sub.startswith(indent) else indent + sub)
+                self.emit(indent + f"move{suffix} {target},d0")
+                op_map = {'+=': 'add', '-=': 'sub', '&=': 'and', '|=': 'or', '^=': 'eor'}
+                instr = op_map.get(stmt.op, 'add')
+                self.emit(indent + f"{instr}{suffix} d1,d0")
+                self.emit(indent + f"move{suffix} d0,{target}")
             else:
                 self.emit(indent + f"; compound assign to unknown target {target}")
         elif isinstance(stmt, ast.Return):
@@ -3329,15 +3580,30 @@ class CodeGen:
             name, vtype, offset = local_info
             size = ast.type_size(vtype) if vtype else 4
             suffix = ast.size_suffix(size)
+            frame_ea = f"{-offset}({frame_reg})"
+
+            dynamic_step = not isinstance(stmt.step, ast.Number)
+            # Keep induction var in a high Dn when step is constant and the body
+            # does not take its address, call out, or assign to it.
+            ind_reg = None
+            if (not dynamic_step
+                    and not self._for_induction_reg_blocked(stmt.body, stmt.var)):
+                ind_reg, _ = self.reg_alloc.try_allocate_preserve()
+                if ind_reg:
+                    self.induction_regs[stmt.var] = ind_reg
+                    self.emit(indent + f"; for {stmt.var} kept in {ind_reg}")
 
             # Initialize: var = start
-            code = self._emit_expr(stmt.start, params, locals_info, "d0", target_type=vtype, frame_reg=frame_reg)
+            init_dest = ind_reg if ind_reg else "d0"
+            code = self._emit_expr(stmt.start, params, locals_info, init_dest, target_type=vtype, frame_reg=frame_reg)
             for l in code:
                 for sub in str(l).splitlines():
                     self.emit(sub if sub.startswith(indent) else indent + sub)
-            self.emit(indent + f"move{suffix} d0,{-offset}({frame_reg})")
+            if ind_reg:
+                self.emit(indent + f"move{suffix} {ind_reg},{frame_ea}")
+            else:
+                self.emit(indent + f"move{suffix} d0,{frame_ea}")
 
-            dynamic_step = not isinstance(stmt.step, ast.Number)
             if dynamic_step:
                 # Evaluate the initial step once so first-iteration bound checks can
                 # select ascending vs descending termination correctly.
@@ -3350,7 +3616,11 @@ class CodeGen:
             self.emit(f"{start_label}:")
 
             # Load var and end into registers for comparison
-            self.emit(indent + f"move{suffix} {-offset}({frame_reg}),d0")
+            if ind_reg:
+                cmp_reg = ind_reg
+            else:
+                self.emit(indent + f"move{suffix} {frame_ea},d0")
+                cmp_reg = "d0"
             code = self._emit_expr(stmt.end, params, locals_info, "d1", target_type=vtype, frame_reg=frame_reg)
             for l in code:
                 for sub in str(l).splitlines():
@@ -3363,11 +3633,11 @@ class CodeGen:
                 self.emit(indent + f"cmp{suffix} #0,d2")
                 self.emit(indent + f"beq {end_label}")
                 self.emit(indent + f"blt {end_label}_desc")
-                self.emit(indent + f"cmp{suffix} d1,d0")
+                self.emit(indent + f"cmp{suffix} d1,{cmp_reg}")
                 self.emit(indent + f"bgt {end_label}")
                 self.emit(indent + f"bra {start_label}_body")
                 self.emit(f"{end_label}_desc:")
-                self.emit(indent + f"cmp{suffix} d1,d0")
+                self.emit(indent + f"cmp{suffix} d1,{cmp_reg}")
                 self.emit(indent + f"blt {end_label}")
                 self.emit(f"{start_label}_body:")
             elif isinstance(stmt.step, ast.Number):
@@ -3377,7 +3647,7 @@ class CodeGen:
                 elif step_val < 0:
                     # Descending loop: use blt (branch if var < end)
                     branch_instr = "blt"
-                self.emit(indent + f"cmp{suffix} d1,d0")
+                self.emit(indent + f"cmp{suffix} d1,{cmp_reg}")
                 self.emit(indent + f"{branch_instr} {end_label}")
 
             # Emit loop body
@@ -3388,23 +3658,38 @@ class CodeGen:
             self.emit(f"{cont_label}:")
 
             # Increment var by step
-            if dynamic_step:
+            if ind_reg:
+                step_val = stmt.step.value
+                if 1 <= step_val <= 8:
+                    self.emit(indent + f"addq{suffix} #{step_val},{ind_reg}")
+                elif -8 <= step_val <= -1:
+                    self.emit(indent + f"subq{suffix} #{-step_val},{ind_reg}")
+                else:
+                    self.emit(indent + f"add{suffix} #{step_val},{ind_reg}")
+            elif dynamic_step:
                 code = self._emit_expr(stmt.step, params, locals_info, "d2", target_type=vtype, frame_reg=frame_reg)
                 for l in code:
                     for sub in str(l).splitlines():
                         self.emit(sub if sub.startswith(indent) else indent + sub)
+                self.emit(indent + f"move{suffix} {frame_ea},d0")
+                self.emit(indent + f"add{suffix} d2,d0")
+                self.emit(indent + f"move{suffix} d0,{frame_ea}")
             else:
                 code = self._emit_expr(stmt.step, params, locals_info, "d1", target_type=vtype, frame_reg=frame_reg)
                 for l in code:
                     for sub in str(l).splitlines():
                         self.emit(sub if sub.startswith(indent) else indent + sub)
-            self.emit(indent + f"move{suffix} {-offset}({frame_reg}),d0")
-            self.emit(indent + f"add{suffix} {'d2' if dynamic_step else 'd1'},d0")
-            self.emit(indent + f"move{suffix} d0,{-offset}({frame_reg})")
+                self.emit(indent + f"move{suffix} {frame_ea},d0")
+                self.emit(indent + f"add{suffix} d1,d0")
+                self.emit(indent + f"move{suffix} d0,{frame_ea}")
 
             # Jump back to loop start
             self.emit(indent + f"bra {start_label}")
             self.emit(f"{end_label}:")
+            if ind_reg:
+                self.emit(indent + f"move{suffix} {ind_reg},{frame_ea}  ; write back induction {stmt.var}")
+                del self.induction_regs[stmt.var]
+                self.reg_alloc.free(ind_reg)
             if self.annotate:
                 self.emit(indent + "; end for")
 
@@ -4105,6 +4390,7 @@ class CodeGen:
                         # Reset push stack for each procedure
                         self.push_stack = []
                         self.dbra_depth = 0
+                        self._begin_proc_regs(it.name)
                         # Never let a diagnostic inherit a line from a previous procedure.
                         self.current_stmt_line = None
 
@@ -4192,6 +4478,7 @@ class CodeGen:
                                     self.emit(indent + f"move.l -{localsize}(a6),a4  ; restore a4 from frame")
                                 self.emit(indent + "unlk a6")
                             self.emit(indent + "rts")
+                        self._end_proc_regs(it.name)
                     elif isinstance(it, ast.InterruptProc):
                         # Dispatch slot for the single real VERTB hardware interrupt (see
                         # docs/INTERRUPT_KEYWORD.md). Always: no params, void, full
@@ -4200,6 +4487,7 @@ class CodeGen:
                         # top-level exception handler - only that master ISR uses RTE).
                         self.push_stack = []
                         self.dbra_depth = 0
+                        self._begin_proc_regs(it.name)
                         frame_reg = "a6"
                         self.emit("")
                         self.emit(f"{it.name}:  ; interrupt slot {it.index} (VBlank dispatch)")
@@ -4218,6 +4506,7 @@ class CodeGen:
                             self.emit(indent + "unlk a6")
                             self.emit(indent + "movem.l (sp)+,d0-d7/a0-a6")
                             self.emit(indent + "rts")
+                        self._end_proc_regs(it.name)
 
         self._emit_interrupt_support()
 

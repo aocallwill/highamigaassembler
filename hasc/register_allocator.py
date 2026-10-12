@@ -1,29 +1,26 @@
 """Register allocation helpers for 68000 assembly code generation.
 
-IMPORTANT (as of 2026-09): ``CodeGen`` does **not** currently use this module.
-Expression and statement emission hardcodes scratch registers (typically
-``d0``/``d1``/``d2``, occasionally ``d3``) and ad-hoc ``-(a7)`` spills.
-``d7`` is reserved compiler-wide for ``dbra`` loop counters and is managed
-exclusively by ``CodeGen._dbra_loop_enter`` / ``_dbra_loop_exit`` (and call-site
-save/restore when ``dbra_depth > 0``).
+``CodeGen`` owns one ``RegisterAllocator`` per module (constructed with
+``#pragma lockreg`` locks) and ``reset()``s it at each procedure entry.
+Expression lowering consults ``allocate_data`` / ``free`` for nested BinOp
+temps so free ``d3``–``d6`` are preferred over ad-hoc ``-(a7)`` spills.
 
-This class remains as a future integration point and as documentation of the
-*intended* register conventions. Do not assume calling ``allocate_data()``
-reserves a register against the rest of codegen — it does not, until CodeGen
-is wired to consult a live allocator instance.
+``d7`` remains reserved compiler-wide for ``dbra`` loop counters and is
+managed exclusively by ``CodeGen._dbra_loop_enter`` / ``_dbra_loop_exit``
+(and call-site save/restore when ``dbra_depth > 0``).
 """
 
 
 class RegisterAllocator:
     """Tracks data/address register in-use sets with optional stack spilling.
 
-    Intended 68000 conventions (not enforced by CodeGen today):
+    Intended 68000 conventions:
 
     Data Registers (d0-d7):
     - d0: Primary expression result, function return value
     - d1: Secondary operand, right-hand side of binary ops
     - d2: Tertiary temp (nested expressions)
-    - d3-d6: Available for complex expressions when an allocator is wired
+    - d3-d6: Available for complex expressions
     - d7: Reserved for loop counters (dbra); never allocate as a general scratch
 
     Address Registers (a0-a6):
@@ -52,6 +49,31 @@ class RegisterAllocator:
         self.data_in_use = set()
         self.addr_in_use = set()
         self.spilled_stack = []
+
+    def mark_in_use(self, register):
+        """Reserve a register already holding a live value (exclusion only)."""
+        if register in self.data_regs:
+            self.data_in_use.add(register)
+        elif register in self.addr_regs:
+            self.addr_in_use.add(register)
+
+    def unmark(self, register):
+        """Release a mark_in_use reservation without emitting restore code."""
+        self.data_in_use.discard(register)
+        self.addr_in_use.discard(register)
+
+    def try_allocate_preserve(self):
+        """Allocate a data register safe across nested hardcoded d0-d2 temps.
+
+        Nested ``_emit_expr`` paths still default to d0/d1/d2, so a live value
+        that must survive a nested evaluation can only live in d3-d6 (or on the
+        stack). Returns ``(reg, [])`` or ``(None, [])`` when no high reg is free.
+        """
+        for reg in ('d6', 'd5', 'd4', 'd3'):
+            if reg in self.data_regs and reg not in self.data_in_use:
+                self.data_in_use.add(reg)
+                return (reg, [])
+        return (None, [])
 
     def allocate_data(self, preferred=None):
         """Allocate a data register. Returns (register, spilled_code)."""
@@ -108,6 +130,14 @@ class RegisterAllocator:
         code = [f"    move.l (a7)+,{reg}  ; restore {reg}"]
         return (reg, code)
 
+    def restore_spills_since(self, depth):
+        """Restore spills pushed after ``depth`` (len of spilled_stack snapshot)."""
+        code = []
+        while len(self.spilled_stack) > depth:
+            _, restore = self.restore_spilled()
+            code.extend(restore)
+        return code
+
     def save_context(self):
         """Save current allocation state (for nested contexts like function calls)."""
         return (set(self.data_in_use), set(self.addr_in_use), list(self.spilled_stack))
@@ -121,6 +151,13 @@ class RegisterAllocator:
         self.data_in_use.clear()
         self.addr_in_use.clear()
         self.spilled_stack.clear()
+
+    def assert_all_free(self, context=""):
+        """Fail if any register remains allocated or spilled (end-of-proc check)."""
+        if self.data_in_use or self.addr_in_use or self.spilled_stack:
+            summary = self.get_allocation_summary()
+            where = f" ({context})" if context else ""
+            raise RuntimeError(f"Register allocator leak{where}: {summary}")
 
     def validate_usage(self, code_line, used_regs):
         """Validate that code doesn't use unallocated or conflicting registers."""

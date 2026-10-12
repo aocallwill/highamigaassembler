@@ -1,3 +1,4 @@
+import re
 import subprocess
 import shutil
 from pathlib import Path
@@ -246,7 +247,10 @@ code main:
 
 def test_68000_multiply_with_complex_right_keeps_stack_save_restore():
     """The removed ext.l sat between the left-operand save/restore pair; pin the
-    surrounding sequence so the pair itself cannot silently disappear."""
+    surrounding sequence so the pair itself cannot silently disappear.
+
+    Preserve may use a high Dn (d3-d6) via RegisterAllocator, or fall back to stack.
+    """
     module = parser.parse(COMPLEX_RIGHT_MUL_SRC)
     asm = codegen.CodeGen(module, BASELINE).gen()
     lines = asm.splitlines()
@@ -254,8 +258,16 @@ def test_68000_multiply_with_complex_right_keeps_stack_save_restore():
     mnemonics, indices = _instruction_mnemonics(lines)
     idx = mnemonics.index("muls.w")
     assert mnemonics[idx - 1] == "move.l"
-    assert "(a7)+" in lines[indices[idx - 1]]
-    save = next(i for i in range(idx - 1, -1, -1) if "-(a7)" in lines[indices[i]])
+    restore_line = lines[indices[idx - 1]]
+    assert (
+        "(a7)+" in restore_line
+        or re.search(r"move\.l\s+d[3-6],d\d+\s+;\s*restore left operand", restore_line)
+    )
+    save = next(
+        i for i in range(idx - 1, -1, -1)
+        if "-(a7)" in lines[indices[i]]
+        or re.search(r";\s*preserve left operand", lines[indices[i]])
+    )
     assert mnemonics[save] == "move.l"
     assert "ext.l" not in mnemonics
 
@@ -627,7 +639,7 @@ code main:
     }
 
     proc float_scale(a: float) -> float {
-        return a * 2;
+        return a * 3;
     }
 
     proc ptr_scale(p: ptr) -> ptr {
@@ -678,12 +690,13 @@ UNSIGNED_U16_OVERFLOW_SRC = """
 code main:
     proc double_big() -> u32 {
         var big: u16 = 50000;
-        return big * 2;
+        return big * 3;
     }
 """
 
 
 def test_u16_above_signed_word_range_uses_unsigned_multiply_on_both_targets():
+    # Use * 3 (not * 2/4/8) so strength-reduce does not replace the mul.
     module = parser.parse(UNSIGNED_U16_OVERFLOW_SRC)
 
     mnemonics_68000, _ = _instruction_mnemonics(

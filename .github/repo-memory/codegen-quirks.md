@@ -12,12 +12,16 @@
   now removed, but codegen-side `_normalize_expr` remains a useful defensive layer for other
   parse tree shapes.
 
-## RegisterAllocator (hasc/register_allocator.py) is unused by CodeGen
-- `CodeGen` does **not** import or instantiate `RegisterAllocator`. `_emit_expr`/`_emit_stmt`
-  hardcode literal register names ("d0", "d1", "d2", occasionally "d3") and ad-hoc `-(a7)`
-  spills. Calling `allocate_data()` does nothing to the rest of codegen.
-- `#pragma lockreg` currently only influences frame-register choice (a4 vs a6), not scratch
-  allocation. Do not claim lockreg reserves expression temps until an allocator is wired.
+## RegisterAllocator is wired into CodeGen (updated for 68000 opt plan)
+- `CodeGen` constructs one `RegisterAllocator(locked_regs=...)` and `reset()`s it at each
+  proc/interrupt entry; `_end_proc_regs` asserts all temps are freed (register-leak detector).
+- BinOp complex-RHS preservation prefers `try_allocate_preserve()` (`d6`..`d3`) so nested
+  hardcoded `d0`/`d1`/`d2` temps cannot clobber the left operand; falls back to `-(a7)` when
+  no high data register is free. Secondary right/temps use `allocate_data` / `free`.
+- `#pragma lockreg` removes locked regs from the allocator pool (scratches) **and** still
+  influences frame-register choice (a4 vs a6).
+- Statement emission still prefers ABI `d0`/`d1` for results; allocator is for nested temps
+  and for-loop induction (`induction_regs` map + `try_allocate_preserve`).
 - **d7 is the one truly-reserved register**: never used as a general scratch. It is
   compiler-wide reserved for `dbra` loop counters (`RepeatLoop`, and the `ForLoop` DBcc fast
   path), managed by `CodeGen.dbra_depth` / `_dbra_loop_enter`/`_dbra_loop_exit`.
