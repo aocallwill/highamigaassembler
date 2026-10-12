@@ -22,7 +22,7 @@ The extension enables developers to work efficiently with HAS source files by of
 
 ### Code Navigation
 
-#### Follow Link (Ctrl+Click) ⭐
+#### Follow Link (Ctrl+Click)
 **Click while holding Ctrl on any procedure name to jump to its definition**
 - Works for:
   - Local procedures in the same file
@@ -35,8 +35,8 @@ The extension enables developers to work efficiently with HAS source files by of
 - Same as Ctrl+Click navigation
 
 #### Find References (Shift+F12)
-- Press **Shift+F12** to find all references to a procedure
-- Shows count and navigates through all usages
+- Press **Shift+F12** to scan `.has` files for matching calls and declarations
+- Shows the raw match count and opens the first match
 
 ### Hover Information
 - Hover over procedure names to see their signature
@@ -120,7 +120,7 @@ TakeSystem:
 - **Entry point:** `extension.js`
 - **DefinitionProvider** - Locates procedure definitions (Ctrl+Click, F12)
 - **HoverProvider** - Shows signatures on hover
-- **ReferenceProvider** - Finds all usages (Shift+F12)
+- **ReferenceProvider** - Scans matching calls and declarations (Shift+F12)
 - **Grammar:** `syntaxes/highamigassembler.tmLanguage.json`
 - **Commands & keybindings:** `package.json`
 
@@ -135,6 +135,7 @@ TakeSystem:
 - Case sensitive (procedure names must match exactly)
 - Pattern matching only (simple regex, not full AST)
 - Workspace scope only (no external libraries)
+- Shift+F12 opens only the first raw match; declarations may be counted twice
 - No rename refactoring yet
 
 ## Version History

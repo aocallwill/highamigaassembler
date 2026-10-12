@@ -5,7 +5,6 @@
 - **lib/heap.s** - Core heap allocator implementation (68000 assembly)
 - **lib/HEAP_README.md** - Complete API reference and usage documentation
 - **lib/HEAP_DESIGN.md** - Design decisions and architecture details
-- **examples/heap_test.has** - Test examples (commented, ready to use)
 
 ## Quick Usage
 
@@ -27,9 +26,8 @@ HEAP_MEMORY=65536 ./scripts/build_game.sh examples/games/robots/robots.has
 
 The build helper passes this define only to `heap.s`; the generated HAS source and other
 libraries are unchanged. Because the heap lives in `bss_c`, its size comes from CHIP RAM.
-Keep the override at or below roughly 128 KiB: block lengths are stored as 16-bit word counts,
-so `141312` bytes (138 KiB) is not currently allocator-safe and should not be enabled for
-Jetpac. Runtime demand and fragmentation may require a smaller practical heap.
+Block lengths are stored as 32-bit word counts, so there is no 128 KiB metadata ceiling.
+Available CHIP RAM, runtime demand, and fragmentation determine the practical heap size.
 
 ```asm
 ; In your startup code:
@@ -39,8 +37,9 @@ jsr HeapInit
 ### 2. Allocate Memory (size in words)
 
 ```asm
-move.l #128,d0              ; 128 words = 256 bytes
+move.l #128,-(sp)           ; stack argument: 128 words = 256 bytes
 jsr HeapAlloc
+addq.l #4,sp
 ; d0 now contains address (or 0 if failed)
 ```
 
@@ -54,31 +53,40 @@ move.l #0x12345678,(a0)     ; Write to memory
 ### 4. Free Memory
 
 ```asm
-move.l d0,a0                ; a0 = address to free
-jsr HeapFree                ; Safe if a0 = 0
+move.l d0,-(sp)             ; stack argument: address to free
+jsr HeapFree
+addq.l #4,sp                ; safe when the argument is 0
 ```
 
 ## Integration Steps
 
-### Step 1: Assemble with heap.s
+### Step 1: Compile and Assemble
 
 ```bash
-vasm68000_mot -Fvasm myprogram.s lib/heap.s -o myprogram.o
+python -m hasc.cli myprogram.has -o myprogram.s
+vasmm68k_mot -Fhunk -devpac -opt-allbra -I lib myprogram.s -o myprogram.o
+vasmm68k_mot -Fhunk -devpac -opt-allbra -I lib lib/heap.s -o heap.o
+vlink -bamigahunk myprogram.o heap.o -o myprogram.exe
 ```
 
-### Step 2: Declare Functions
+### Step 2: Declare Functions in HAS
 
-In your .has code:
+In your `.has` code, declare the external functions and call them normally. HAS
+emits the stack-based argument sequence:
 
 ```has
+extern func HeapInit();
+extern func HeapAlloc(size_words: long) -> ptr;
+extern func HeapFree(ptr: ptr);
+
 code myapp:
     proc test_malloc() -> int {
-        var ptr:int = 0;
-        
-        ; Allocate 256 bytes inline (128 words)
-        asm "move.l #128,d0; jsr HeapAlloc; move.l d0,ptr_addr";
-        
-        return ptr;
+        HeapInit();
+        var buffer: ptr = HeapAlloc(128);
+        if (buffer != 0) {
+            HeapFree(buffer);
+        }
+        return 0;
     }
 ```
 
@@ -88,8 +96,9 @@ code myapp:
 
 ```asm
 ; Allocate array of 100 integers (400 bytes => 200 words)
-move.l #200,d0
+move.l #200,-(sp)
 jsr HeapAlloc
+addq.l #4,sp
 move.l d0,array_base
 
 ; Access element at index i:
@@ -102,8 +111,9 @@ add.l array_base,d0         ; d0 = &array[i]
 
 ```asm
 ; Allocate node (8 bytes data + 8 bytes pointers = 16 bytes => 8 words)
-move.l #8,d0
+move.l #8,-(sp)
 jsr HeapAlloc
+addq.l #4,sp
 move.l d0,node_ptr
 
 ; Write data
@@ -121,8 +131,9 @@ move.l #0,12(node_ptr)      ; prev = NULL
 ; Always check before freeing
 cmp.l #0,ptr                ; Check if ptr is not NULL
 beq skip_free
-move.l ptr,a0
+move.l ptr,-(sp)
 jsr HeapFree
+addq.l #4,sp
 skip_free:
 ```
 
@@ -130,12 +141,12 @@ skip_free:
 
 | Requested (words) | Allocated (words) | Overhead (bytes) |
 |-------------------|-------------------|------------------|
-| 1-2               | 2                 | 4                |
-| 128 (256B)        | 128               | 4                |
-| 512 (1KB)         | 512               | 4                |
-| 2048 (4KB)        | 2048              | 4                |
+| 1                 | 1                 | 8                |
+| 128 (256B)        | 128               | 8                |
+| 512 (1KB)         | 512               | 8                |
+| 2048 (4KB)        | 2048              | 8                |
 
-**Note:** Header is 4 bytes; requests are in words (16-bit units)
+**Note:** Each header is 8 bytes; requests are measured in 16-bit words.
 
 ## Performance Tips
 
@@ -168,12 +179,10 @@ bne memory_corrupted
 
 1. Review **HEAP_README.md** for complete API documentation
 2. Read **HEAP_DESIGN.md** for architecture and design decisions
-3. Check **examples/heap_test.has** for test patterns
-4. Link **lib/heap.s** with your project and try it!
+3. Link **lib/heap.s** with your project using the separate-object workflow above
 
 ## Support
 
 For issues or questions:
-- Review the commented test cases in heap_test.has
 - Check API documentation in HEAP_README.md
 - See architecture details in HEAP_DESIGN.md

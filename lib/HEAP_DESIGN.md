@@ -2,20 +2,21 @@
 
 ## Executive Summary
 
-Created a **custom heap memory allocator** for Amiga 68000 targets rather than using Kickstart system routines. This provides better control, portability, and educational value for the High Assembler project. The current implementation is a compact first-fit scanner over a fixed internal heap buffer with 4-byte headers and no external dependencies.
+The heap memory allocator for Amiga 68000 targets is a compact first-fit scanner
+over a fixed internal buffer with 8-byte headers and no operating-system
+dependency. This design supports bare-metal use and keeps allocation behavior
+visible to HAS programs.
 
 The buffer defaults to `10*1024` bytes and is allocated in the `bss_c` section, so it uses CHIP
 RAM. Projects may override the size when assembling `lib/heap.s` with
 `-D HEAP_MEMORY=<bytes>`; `scripts/build_game.sh` also accepts `HEAP_MEMORY` and passes it only
-to that library. Keep overrides at or below roughly 128 KiB. The high word of each header stores
-the payload length as a 16-bit word count, so a `141312`-byte (138 KiB) override is not
-allocator-safe and should not be enabled for Jetpac until the metadata is redesigned.
+to that library. Block lengths use a 32-bit word count, so the allocator does not impose a
+16-bit length ceiling. Practical limits are available CHIP RAM and the assembly/link format.
 
 ## Design Decision: Custom vs. Kickstart
 
-### Why NOT Kickstart's AllocMem/FreeMem
+### Kickstart `AllocMem`/`FreeMem` Tradeoffs
 
-❌ **Complications:**
 1. Requires proper Exec library initialization
 2. Complex calling conventions and ABI compliance
 3. Exception handling needed for memory exhaustion
@@ -23,9 +24,8 @@ allocator-safe and should not be enabled for Jetpac until the metadata is redesi
 5. Makes project less portable (not bare-metal friendly)
 6. Overkill for simple allocation patterns
 
-### Why Custom Implementation
+### Custom Allocator Tradeoffs
 
-✅ **Advantages:**
 1. **Portability**: Works bare-metal, emulators, any 68000 environment
 2. **Educational**: Clear algorithm visible to users
 3. **Control**: Optimization for specific patterns
@@ -41,8 +41,8 @@ allocator-safe and should not be enabled for Jetpac until the metadata is redesi
 Walk heap from start:
   - Skip occupied blocks
   - Take first free block with enough words
-  - Split if the remainder can still hold a header (4 bytes) and payload
-  - Return payload pointer (header + 4)
+  - Split if the remainder can still hold an 8-byte header and payload
+  - Return payload pointer (header + 8)
 ```
 
 **Why First-Fit?**
@@ -63,19 +63,19 @@ Mark block free:
 
 ## Data Structure: Linear Blocks
 
-### Block Metadata (4 bytes per block)
+### Block Metadata (8 bytes per block)
 
 ```
-Word0 (high): length in words (payload only)
-Word0 (low) : status (0 = free, 1 = occupied)
+Offset +0.l: length in words (payload only)
+Offset +4.l: status (0 = free, 1 = occupied)
 
 Payload follows immediately
-End marker: header with length=0 marks heap end
+End marker: 8-byte header with length=0 marks heap end
 ```
 
 ### Why So Small?
 
-1. Keeps allocator compact (no pointers in headers)
+1. Uses full-width lengths without pointers in headers
 2. Works with fixed internal buffer and sequential scan
 3. Simplifies splitting/coalescing logic
 
@@ -83,9 +83,9 @@ End marker: header with length=0 marks heap end
 
 | Component | Bytes | Notes |
 |-----------|-------|-------|
-| Per block header | 4 | Fixed overhead |
-| Min allocation | 4 payload bytes (2 words) when split allows |
-| Overhead % | ~2% for 256-byte alloc |
+| Per block header | 8 | Fixed overhead |
+| Min allocation | 2 payload bytes (1 word) |
+| Overhead % | ~3% for 256-byte allocation |
 
 ## Fragmentation Management
 
@@ -96,8 +96,8 @@ Before: [Free: 512 words]
 Request: 200 words (400 bytes)
 
 After split:
-[Alloc: 200w + 4-byte header] [Free: 312w]
-(split only if tail can hold header + >=1 word payload)
+[Alloc: 200w + 8-byte header] [Free: 308w]
+(split only if the tail can hold a 4-word header and payload)
 ```
 
 ### Coalescing Example
@@ -105,8 +105,8 @@ After split:
 ```
 State: [Alloc 128w][Free 64w][Free 32w]
 
-Free(alloc block) → mark free, forward-coalesce to 96w, then
-scan from heap_start to find predecessor and merge if adjacent.
+Free(alloc block) → mark free, then merge both following blocks. The result is
+232 words: 128 + 64 + 32 payload words plus two reclaimed 4-word headers.
 ```
 
 ## API Design
@@ -116,19 +116,19 @@ scan from heap_start to find predecessor and merge if adjacent.
 1. **HeapInit() → void**
   - One-time setup; uses internal heap buffer
 
-2. **HeapAlloc(d0: size_words) → d0: address**
-  - Size is in words (16-bit units)
+2. **HeapAlloc(size_words: long) → d0: address**
+  - The longword argument is passed on the stack and specifies 16-bit words
   - Returns 0 on failure
 
-3. **HeapFree(a0: address) → void**
+3. **HeapFree(address: ptr) → void**
+  - The pointer argument is passed on the stack
   - Safe with NULL/0
   - Address must come from HeapAlloc
 
 ### Convention Choices
 
-- **Parameters in d0/a0**: Standard 68000 conventions
+- **Parameters on stack**: HAS external-call convention
 - **Return in d0**: Primary results in d0
-- **Preserve registers**: All routines save d1-d7/a0-a6
 - **No exceptions**: Return 0 on failure (simple error handling)
 
 ## Performance Characteristics
@@ -151,41 +151,37 @@ Where n = number of blocks scanned (free + used)
 
 ### Space Complexity
 
-- **Allocated blocks**: O(n) + 4 bytes header per block
+- **Allocated blocks**: O(n) + 8 bytes header per block
 - **Free/used blocks**: Same header format; no extra pointers
-- **Total overhead**: 4n bytes (where n = number of blocks)
+- **Total overhead**: 8n bytes (where n = number of blocks)
 
 ## Implementation Highlights
 
 ### Key Features
 
 1. **In-band metadata**: Headers stored in heap, not separate
-2. **Bit-packed header**: High word = length in words; low word = status
+2. **Full-width fields**: Longword length and longword status
 3. **Sequential scan**: No explicit free list
 4. **End marker**: Zero-length header terminates heap walk
 
 ### Edge Cases Handled
 
-- ✅ NULL pointer to HeapFree - silently ignored
-- ✅ Allocation smaller than minimum - rounded up to words
-- ✅ Allocation larger than available - returns 0
-- ✅ Multiple adjacent free blocks - coalesced forward/backward
-- ✅ Empty heap - initialized as single free block + end marker
+- NULL pointer to `HeapFree` is silently ignored.
+- `HeapAlloc` rejects requests of zero words or less. Callers convert byte
+  counts to words with `(bytes + 1) / 2`.
+- Allocation larger than available memory returns `0`.
+- Multiple adjacent free blocks are coalesced forward and backward.
+- An empty heap is initialized as one free block plus an end marker.
 
 ## Testing Strategy
 
-### Test Cases Implemented
+### Verification Cases
 
 1. **Single allocation**: Allocate and free one block
 2. **Multiple allocations**: Several blocks of different sizes
 3. **Fragmentation**: Allocate/free pattern creating holes
 4. **Coalescing**: Verify free blocks merge correctly
-- **Statistics**: (not present) users can add scanners if needed
-6. **Edge cases**: Min size, NULL pointer, allocation failure
-
-### Test Framework (heap_test.has)
-
-Commented example tests ready to uncomment when linking with heap.s
+5. **Edge cases**: One-word request, NULL pointer, allocation failure
 
 ## Integration with High Assembler
 
@@ -195,11 +191,12 @@ Commented example tests ready to uncomment when linking with heap.s
 # Compile High Assembler source
 python3 -m hasc.cli myprogram.has -o myprogram.s
 
-# Assemble with heap.s
-vasm68000_mot -Fvasm -m68000 -quiet myprogram.s lib/heap.s -o myprogram.o
+# Assemble the program and heap as separate objects
+vasmm68k_mot -Fhunk -devpac -opt-allbra -I lib myprogram.s -o myprogram.o
+vasmm68k_mot -Fhunk -devpac -opt-allbra -I lib lib/heap.s -o heap.o
 
 # Link
-vlink -Bvlink myprogram.o -o myprogram.exe
+vlink -bamigahunk myprogram.o heap.o -o myprogram.exe
 ```
 
 ### Usage in .has Files
@@ -247,14 +244,9 @@ code myapp:
 - "Memory Allocators 101" - standard allocation algorithms
 - Amiga Developer CDN - calling conventions and ABI
 
-## Conclusion
+## Design Properties
 
-The custom heap manager provides:
-
-✅ **Simplicity**: Straightforward first-fit with coalescing
-✅ **Portability**: No external dependencies
-✅ **Transparency**: Algorithm visible and modifiable
-✅ **Adequate Performance**: Suitable for typical allocation patterns
-✅ **Educational Value**: Clear example of low-level memory management
-
-Perfect fit for the High Assembler's philosophy of providing high-level control without sacrificing low-level understanding.
+- **Simplicity**: First-fit allocation with adjacent-block coalescing.
+- **Portability**: No external runtime dependencies.
+- **Transparency**: In-band metadata and linear scans are directly inspectable.
+- **Performance**: Linear behavior is intended for heaps with a modest block count.

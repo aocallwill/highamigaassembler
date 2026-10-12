@@ -72,7 +72,7 @@ python3 tools/bob_importer.py player.png 5 --label-prefix bob_player
 
 ---
 
-## bob_strip_importer.py - BOB Animation Converter ⭐
+## bob_strip_importer.py - BOB Animation Converter
 
 ### Basic Usage
 ```bash

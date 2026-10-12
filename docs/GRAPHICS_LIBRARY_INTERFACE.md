@@ -479,13 +479,12 @@ nearly all of the chip RAM.
 4. Link together: `vlink -bamigahunk -o program program.o graphics.o`
 5. Run on Amiga or emulator
 
-## Conclusion
+## Calling Convention Summary
 
-The graphics.s library is **fully compatible** with HAS's calling convention. You can:
-- ✅ Declare functions as `extern func`
-- ✅ Call them like any other function
-- ✅ Pass arguments normally
-- ✅ Receive return values in variables
-- ✅ Mix HAS code and assembly blocks seamlessly
+Declare graphics entry points with `extern func`, call them from HAS
+expressions or statements, and read scalar return values normally. Inline
+assembly can be mixed with those calls when direct register or hardware access
+is needed.
 
-The only limitation is string handling, which currently requires assembly blocks for string definitions.
+String arguments must point to persistent storage defined in a data section or
+an assembly block.

@@ -1,7 +1,7 @@
 # Heap Memory Manager for High Assembler
 
 ## Overview
-A small first-fit heap written in 68000 assembly. It uses a single fixed buffer and compact 4-byte headers—no free lists or OS calls.
+A small first-fit heap written in 68000 assembly. It uses a single fixed buffer and 8-byte headers--no free lists or OS calls.
 
 - **Fixed-size heap**: `HEAP_MEMORY = 10*1024` bytes by default in CHIP RAM
 - **Simple header**: length (words) + status
@@ -15,11 +15,11 @@ heap_start:
 heap_end:
 ```
 - Blocks are contiguous; end-of-heap marker is a zero-length header.
-- Data pointer returned to callers is 4 bytes past the block header.
+- Data pointer returned to callers is 8 bytes past the block header.
 
-### Block Header (4 bytes)
-- **High word**: payload length in **words** (16-bit units), excludes header
-- **Low word**: status (`0` = free, `1` = occupied)
+### Block Header (8 bytes)
+- **Offset +0.l**: payload length in **words**, excludes header
+- **Offset +4.l**: status (`0` = free, `1` = occupied)
 
 ## Constants (from lib/heap.s)
 - `HEAP_MEMORY` = `10*1024` bytes by default (long-aligned)
@@ -44,11 +44,9 @@ it only while assembling `lib/heap.s`:
 HEAP_MEMORY=65536 ./scripts/build_game.sh examples/games/robots/robots.has
 ```
 
-Keep overrides at or below roughly 128 KiB. Each block header stores the payload length as a
-16-bit word count, so a simple larger override is not allocator-safe. In particular, do not
-use `141312` bytes (138 KiB) for Jetpac yet; that size exceeds the current metadata limit and
-needs a future allocator header redesign. The safe usable size also depends on runtime demand
-and fragmentation.
+Block lengths use a 32-bit word count, so the allocator has no 128 KiB metadata ceiling.
+Choose a size that fits available CHIP RAM and leaves room for the rest of the program's
+DMA-visible data. Runtime demand and fragmentation determine the useful capacity.
 
 ## API
 ### HeapInit()
@@ -60,7 +58,7 @@ and fragmentation.
 - Scans from `heap_start`:
   - skips occupied blocks
   - uses first free block that fits
-  - splits when the remainder can fit a header (needs ≥ 2 words for header/end)
+    - splits when the remainder exceeds the 4-word header cost
   - otherwise consumes the whole block
 - Returns data pointer (after header) or `0` on failure.
 
@@ -93,25 +91,29 @@ code demo:
 ```asm
     jsr HeapInit
 
-    move.l #256,d0        ; request 256 words (512 bytes)
+    move.l #256,-(sp)     ; request 256 words (512 bytes)
     jsr HeapAlloc
+    addq.l #4,sp
     tst.l d0
     beq alloc_failed
     ; d0 now holds payload pointer
 
-    move.l d0,8(a6)       ; example: pass pointer
+    move.l d0,a0          ; retain/use the pointer before another call
+    move.l a0,-(sp)
+    jsr HeapFree
+    addq.l #4,sp
+    bra.s heap_done
 
-alloc_failed:
+  alloc_failed:
     ; handle error
 
-    move.l d0,8(a6)
-    jsr HeapFree
+  heap_done:
 ```
 
 ## Behavior Details
 - **Alignment**: payload is word-aligned; headers are longwords.
-- **Splitting rule**: remainder must be at least 2 words (enough for a header/end marker). Otherwise the allocator consumes the whole block.
-- **End marker**: 4-byte zero header at `heap_end-4` is maintained on alloc/split.
+- **Splitting rule**: the remainder must exceed 4 words so it can hold an 8-byte header and payload. Otherwise the allocator consumes the whole block.
+- **End marker**: an 8-byte zero-length header at `heap_end-8` terminates the scan.
 - **Safety**: HeapFree checks bounds and status before freeing.
 
 ## Limitations

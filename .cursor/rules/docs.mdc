@@ -14,6 +14,10 @@ Evidence-first documentation. Sync README, `docs/`, and `docs/CHANGELOG.md` with
 - Prefer targeted edits over broad rewrites.
 - Include tested commands and realistic examples.
 - Changelog for user-visible changes.
+- Do not create implementation summaries, completion reports, final reports, work logs, or other documents about what a task fixed, changed, completed, or validated.
+- Put transient work summaries, validation results, and changed-file lists in chat, not repository files.
+- Continue updating canonical guides and the changelog when behavior or workflows change; create new docs only for durable reference material that does not fit an existing guide.
+- Keep changelog entries user-facing rather than using them as task reports.
 - UTF-8; preserve Unicode; scan for mojibake (`ðŸ`, `â”`, `Ã`).
 - If code evidence is insufficient, flag as open question — do not guess.
 

@@ -158,11 +158,10 @@ optimizations are not enabled.
 - **[docs/INSTALL.md](docs/INSTALL.md)** - Installation and quick verification
 - **[docs/COMPILER_DEVELOPERS_GUIDE.md](docs/COMPILER_DEVELOPERS_GUIDE.md)** - Architecture and internals
 - **[docs/DEVELOPERS_GUIDE.md](docs/DEVELOPERS_GUIDE.md)** - Language reference and usage patterns
-- **[docs/COMPILER_FEATURES_SUMMARY.md](docs/COMPILER_FEATURES_SUMMARY.md)** - Feature overview
 
 ### Feature-Specific Documentation
 
-- **[docs/PROC_VS_FUNC_SUMMARY.md](docs/PROC_VS_FUNC_SUMMARY.md)** - Understanding `proc` vs `func` vs `extern func`
+- **[docs/TERMINOLOGY.md](docs/TERMINOLOGY.md)** - Understanding `proc` vs `func` vs `extern func`
 - **[docs/NATIVE_KEYWORD.md](docs/NATIVE_KEYWORD.md)** - Zero-overhead native functions for performance-critical code
 - **[docs/INTERRUPT_KEYWORD.md](docs/INTERRUPT_KEYWORD.md)** - `interrupt`/`starti`/`endi`: software VBlank dispatch slots (AMOS AMAL/`EVERY`-style)
 - **[docs/OPERATORS.md](docs/OPERATORS.md)** - Complete operator reference
