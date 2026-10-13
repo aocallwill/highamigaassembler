@@ -9,93 +9,264 @@
   },
   "tokenColors": [
     {
-      "scope": "keyword.directive",
+      "name": "HAS comments",
+      "scope": [
+        "comment.line.double-slash.highamigassembler",
+        "comment.line.semicolon.asm.highamigassembler"
+      ],
       "settings": {
-        "foreground": "#00BB00"
+        "foreground": "#6A9955",
+        "fontStyle": "italic"
       }
     },
     {
+      "name": "HAS strings",
+      "scope": [
+        "string.quoted.double.highamigassembler",
+        "string.quoted.other.highamigassembler"
+      ],
+      "settings": {
+        "foreground": "#CE9178"
+      }
+    },
+    {
+      "name": "Preprocessor #include / #warning / #error / #pragma",
       "scope": [
         "keyword.directive.highamigassembler",
         "keyword.directive.include.highamigassembler"
       ],
       "settings": {
-        "foreground": "#00BB00"
+        "foreground": "#4EC9B0",
+        "fontStyle": "bold"
       }
     },
     {
+      "name": "Preprocessor #import",
       "scope": [
-        "keyword.directive.if.highamigassembler"
+        "keyword.directive.import.highamigassembler"
       ],
       "settings": {
-        "foreground": "#FF8C00"
+        "foreground": "#D7BA7D",
+        "fontStyle": "bold"
       }
     },
     {
+      "name": "Import kind (bob|palette|sprite|atlas|tileset|tilemap)",
       "scope": [
-        "keyword.directive.ifdef.highamigassembler"
+        "support.type.import-kind.highamigassembler"
       ],
       "settings": {
-        "foreground": "#00CED1"
+        "foreground": "#C586C0",
+        "fontStyle": "bold"
       }
     },
     {
+      "name": "Import as keyword",
       "scope": [
-        "keyword.directive.ifndef.highamigassembler"
+        "keyword.other.import-as.highamigassembler"
       ],
       "settings": {
-        "foreground": "#FF69B4"
+        "foreground": "#D7BA7D"
       }
     },
     {
+      "name": "Import options (planes=, add_word, match_palette=…)",
       "scope": [
-        "keyword.directive.endif.highamigassembler"
+        "support.variable.import-option.highamigassembler"
       ],
       "settings": {
-        "foreground": "#ADFF2F"
+        "foreground": "#9CDCFE"
       }
     },
     {
+      "name": "Import label after as",
       "scope": [
-        "entity.name.function.highamigassembler"
+        "entity.name.label.import.highamigassembler"
       ],
       "settings": {
-        "foreground": "#FFD700" 
+        "foreground": "#FFD700"
       }
     },
     {
-      "scope": [
-        "keyword.other.instruction.highamigassembler"
-      ],
+      "name": "Conditional #if",
+      "scope": ["keyword.directive.if.highamigassembler"],
       "settings": {
-        "foreground": "#008000"
+        "foreground": "#FF8C00",
+        "fontStyle": "bold"
       }
     },
     {
-      "scope": [
-        "keyword.declaration.proc.highamigassembler"
-      ],
+      "name": "Conditional #ifdef",
+      "scope": ["keyword.directive.ifdef.highamigassembler"],
+      "settings": {
+        "foreground": "#00CED1",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Conditional #ifndef",
+      "scope": ["keyword.directive.ifndef.highamigassembler"],
+      "settings": {
+        "foreground": "#FF69B4",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Conditional #else",
+      "scope": ["keyword.directive.else.highamigassembler"],
+      "settings": {
+        "foreground": "#FFA500",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Conditional #endif",
+      "scope": ["keyword.directive.endif.highamigassembler"],
+      "settings": {
+        "foreground": "#ADFF2F",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Procedure / function names",
+      "scope": ["entity.name.function.highamigassembler"],
+      "settings": {
+        "foreground": "#FFD700"
+      }
+    },
+    {
+      "name": "Language control commands (if/while/call/return/…)",
+      "scope": ["keyword.control.highamigassembler"],
+      "settings": {
+        "foreground": "#569CD6",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Section keywords (code/data/bss…)",
+      "scope": ["keyword.control.section.highamigassembler"],
+      "settings": {
+        "foreground": "#4FC1FF",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Declaration proc",
+      "scope": ["keyword.declaration.proc.highamigassembler"],
       "settings": {
         "foreground": "#D35400",
         "fontStyle": "bold"
       }
     },
     {
-      "scope": [
-        "keyword.declaration.func.highamigassembler"
-      ],
+      "name": "Declaration func",
+      "scope": ["keyword.declaration.func.highamigassembler"],
       "settings": {
         "foreground": "#009688",
         "fontStyle": "bold"
       }
     },
     {
-      "scope": [
-        "storage.type.highamigassembler"
-      ],
+      "name": "Declaration interrupt",
+      "scope": ["keyword.declaration.interrupt.highamigassembler"],
+      "settings": {
+        "foreground": "#E67E22",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Modifier native",
+      "scope": ["keyword.modifier.native.highamigassembler"],
+      "settings": {
+        "foreground": "#E74C3C",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Types",
+      "scope": ["storage.type.highamigassembler"],
       "settings": {
         "foreground": "#B000B5",
         "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Size suffixes .b/.w/.l",
+      "scope": ["storage.modifier.size-suffix.highamigassembler"],
+      "settings": {
+        "foreground": "#D7BA7D"
+      }
+    },
+    {
+      "name": "m68k instructions (move/jsr/…)",
+      "scope": ["keyword.other.instruction.highamigassembler"],
+      "settings": {
+        "foreground": "#3FA34D",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Assembler pseudo-ops (dc/ds/xdef/section/…)",
+      "scope": ["keyword.other.pseudo-op.highamigassembler"],
+      "settings": {
+        "foreground": "#B5CEA8",
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "name": "CPU registers",
+      "scope": ["variable.language.register.highamigassembler"],
+      "settings": {
+        "foreground": "#9CDCFE"
+      }
+    },
+    {
+      "name": "@python decorator",
+      "scope": ["keyword.other.decorator.highamigassembler"],
+      "settings": {
+        "foreground": "#C586C0",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "__reg",
+      "scope": ["keyword.other.register.highamigassembler"],
+      "settings": {
+        "foreground": "#4EC9B0"
+      }
+    },
+    {
+      "name": "Builtins GetReg/SetReg",
+      "scope": ["support.function.builtin.highamigassembler"],
+      "settings": {
+        "foreground": "#DCDCAA",
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "name": "Numbers",
+      "scope": [
+        "constant.numeric.hex.highamigassembler",
+        "constant.numeric.binary.highamigassembler",
+        "constant.numeric.decimal.highamigassembler"
+      ],
+      "settings": {
+        "foreground": "#B5CEA8"
+      }
+    },
+    {
+      "name": "Operators",
+      "scope": [
+        "keyword.operator.assignment.compound.highamigassembler",
+        "keyword.operator.assignment.highamigassembler",
+        "keyword.operator.comparison.highamigassembler",
+        "keyword.operator.logical.highamigassembler",
+        "keyword.operator.arithmetic.highamigassembler",
+        "keyword.operator.bitwise.highamigassembler",
+        "keyword.operator.other.highamigassembler"
+      ],
+      "settings": {
+        "foreground": "#D4D4D4"
       }
     }
   ]

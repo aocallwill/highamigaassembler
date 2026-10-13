@@ -16,9 +16,12 @@ The extension enables developers to work efficiently with HAS source files by of
 ## Features
 
 ### Syntax Highlighting
-- Keywords from the language grammar: sections, procedures, control flow, macros, directives, and register hints
+- Language commands vs declarations vs sections each use distinct colors (`call`/`if`/`return`, `proc`/`func`/`interrupt`, `code`/`data`/`bss`)
+- Preprocessor directives: `#include`, `#warning`/`#error`/`#pragma`, conditionals (`#if`/`#ifdef`/`#ifndef`/`#else`/`#endif`), and `#import`
+- `#import` kinds (`bob`/`palette`/`sprite`/`atlas`/`tileset`/`tilemap`), `as`, options (`planes=`, `add_word`, `match_palette=`, …), and labels
+- Inside `asm { }`: m68k instructions (e.g. `move`/`jsr`) vs assembler pseudo-ops (`dc`/`ds`/`xdef`/`section`) — different colors; case-insensitive
 - Number formats: decimal, `$`/`0x` hex, and `%` binary
-- Strings, comments (`//`), size suffixes (`.b`, `.w`, `.l`), registers (`d0-d7`, `a0-a7`)
+- Strings, comments (`//`), size suffixes (`.b`, `.w`, `.l`), registers (`d0`–`d7`, `a0`–`a7`, `sp`/`pc`)
 
 ### Code Navigation
 
@@ -139,6 +142,12 @@ TakeSystem:
 - No rename refactoring yet
 
 ## Version History
+
+### 0.1.1
+- `#import bob|palette|sprite|atlas|tileset|tilemap` highlighting (directive, kind, `as`, options, labels)
+- Distinct theme colors for language commands, sections, declarations, `#import`, m68k instructions, and assembler pseudo-ops
+- Case-insensitive asm mnemonics/pseudo-ops scoped to `asm { }` blocks (matches HAS semantics)
+- Theme registered as `vs-dark`
 
 ### 0.1.0
 - Definition provider (Ctrl+Click, F12)

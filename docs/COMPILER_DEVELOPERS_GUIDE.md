@@ -50,14 +50,16 @@ Use these constraints when implementing or reviewing compiler changes to prevent
 
 ```
 hasc/
-├── cli.py          # Command-line interface, orchestrates compilation
-├── parser.py       # Lark-based parser, converts text → AST
-├── ast.py          # AST node definitions, type system
-├── validator.py    # Semantic validation, symbol checking
-├── target.py       # Closed CPU target model and capabilities
-├── indexed_address.py       # Pure target-aware indexed-address lowering
+├── cli.py                 # Command-line interface, orchestrates compilation
+├── amiga_toolchain.py     # Optional --exe/--adf: vasm → vlink → bootable ADF
+├── asset_import.py        # #import bob|palette|sprite|atlas|tileset|tilemap
+├── parser.py              # Lark-based parser, converts text → AST
+├── ast.py                 # AST node definitions, type system
+├── validator.py           # Semantic validation, symbol checking
+├── target.py              # Closed CPU target model and capabilities
+├── indexed_address.py     # Pure target-aware indexed-address lowering
 ├── codegen_indexed_address.py # Codegen adapters for indexed access paths
-└── codegen.py      # Code generation, register allocation, target plumbing
+└── codegen.py             # Code generation, register allocation, target plumbing
 ```
 
 ### Data Flow
@@ -65,28 +67,37 @@ hasc/
 ```
 .has source file
       ↓
+ [Preprocessor] ───→ #include / #ifdef / #import (asset_imports side-channel)
+      ↓
    [Parser] ────→ AST (Abstract Syntax Tree)
       ↓
   [Validator] ───→ Validated AST + Warnings
       ↓
   [Reachability] → Pruned AST  (opt-in; see --strip-unused-procs)
       ↓
-    [TargetSpec] ───→ [CodeGen] ─────→ 68000/68020 Assembly Text
+    [TargetSpec] ───→ [CodeGen] ─────→ 68000/68020 Assembly Text (.s)
+                                       (+ vasm INCLUDE for #import assets)
       ↓
-   vasm/vlink ───→ Executable Binary
+  [--exe / --adf] ───→ amiga_toolchain → vasm (-Fhunk) → vlink (-bamigahunk)
+                       → Amiga hunk exe; optional bootable ADF (amitools)
+```
 
 **Semicolon usage note**: Semicolons terminate statements in HAS source. Generated assembly uses newlines for instructions; `;` in assembly is only a comment prefix.
+
+Default `hasc` still writes only `.s`. Pass `--exe PATH` and/or `--adf PATH` to
+invoke the host Amiga toolchain after a successful compile (`VASM`/`VLINK`/`XDFTOOL`
+env overrides). `--cpu` selects both codegen and the matching vasm `-m68000`/`-m68020`.
 
 ### Current Feature Set (quick map)
 
 - Sections: `data`/`data_chip`, `bss`/`bss_chip`, `code`/`code_chip`, inline `asm`
-- Compile-time directives: `#warning`, `#error`, `#pragma lockreg(...)`, `#pragma strict16arith(on|off)`, `const` declarations
+- Compile-time directives: `#warning`, `#error`, `#pragma lockreg(...)`, `#pragma strict16arith(on|off)`, `const` declarations, `#import` assets
 - Dead-code elimination: `--strip-unused-procs` removes unreachable internal `proc` definitions via call-graph analysis (`hasc/reachability.py`)
 - Procedure system: `proc`, forward `func` declarations, `extern func/var`, `public` exports
 - Control flow and expressions: loops (`for`/`while`/`repeat`), conditionals, full operator set including shifts and bitwise ops
 - Python integration: macros, `@python` directives, optional external generation via `--generate`
 - Data constructs: arrays (multi-dimensional), structs, pointer/address-of/deref operations
-```
+- Host build: `--exe` / `--adf` via `amiga_toolchain.py` (requires separately installed vasm/vlink; ADF needs amitools)
 
 ---
 
@@ -938,12 +949,14 @@ python -m hasc.cli examples/new_feature_test.has -o debug/new_feature.s
 cat debug/new_feature.s
 ```
 
-4. **Assemble** (if vasm installed):
+4. **Assemble / link** (if vasm+vlink installed):
 ```bash
-vasm -Fhunk -m68000 -o debug/new_feature.o debug/new_feature.s
+.venv/bin/python3 -m hasc.cli examples/new_feature_test.has -o debug/new_feature.s --exe debug/new_feature.exe
+# Or assemble only:
+vasmm68k_mot -m68000 -Fhunk -o debug/new_feature.o debug/new_feature.s
 ```
 
-5. **Check errors**: If vasm reports errors, assembly is invalid
+5. **Check errors**: If vasm/vlink report errors, assembly or linking is invalid
 
 ### Automated Test Runner
 

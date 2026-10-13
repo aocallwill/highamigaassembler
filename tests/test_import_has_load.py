@@ -17,6 +17,8 @@ ASSETS = COMPILER_TESTS / "assets"
 BOB_HAS = COMPILER_TESTS / "import_bob_load_test.has"
 SPRITE_HAS = COMPILER_TESTS / "import_sprite_load_test.has"
 BOTH_HAS = COMPILER_TESTS / "import_bob_sprite_load_test.has"
+ATLAS_HAS = COMPILER_TESTS / "import_atlas_load_test.has"
+TILES_HAS = COMPILER_TESTS / "import_tiles_load_test.has"
 
 
 def _compile_has(src_path: Path, out_dir: Path, cpu: str) -> str:
@@ -82,3 +84,44 @@ def test_import_bob_and_sprite_load_has(tmp_path: Path, cpu: str):
     assert "import_combo_sprite.s" in asm
     # Both INCLUDEs present
     assert asm.count("INCLUDE") >= 2
+
+
+@pytest.mark.parametrize("cpu", [CpuTarget.M68000.value, CpuTarget.M68020.value])
+def test_import_atlas_load_has(tmp_path: Path, cpu: str):
+    assert (ASSETS / "mini_atlas.xml").is_file()
+    assert (ASSETS / "mini_atlas.png").is_file()
+    asm = _compile_has(ATLAS_HAS, tmp_path / "atlas", cpu)
+
+    assert "LoadPalette" in asm
+    assert "CreateBob" in asm
+    assert "lea walk_palette" in asm
+    assert "lea walk_frame_0" in asm
+    assert "lea walk_frame_1" in asm
+    assert "walk_atlas.s" in asm
+    gen = tmp_path / "atlas" / "gen"
+    assert (gen / "walk_atlas.s").is_file()
+    assert (gen / "walk_palette.s").is_file()
+    assert (gen / "walk_frame_0.s").is_file()
+    assert (gen / "walk_frame_1.s").is_file()
+
+
+@pytest.mark.parametrize("cpu", [CpuTarget.M68000.value, CpuTarget.M68020.value])
+def test_import_tileset_tilemap_load_has(tmp_path: Path, cpu: str):
+    assert (ASSETS / "mini_tiles.png").is_file()
+    assert (ASSETS / "mini_map.tmx").is_file()
+    asm = _compile_has(TILES_HAS, tmp_path / "tiles", cpu)
+
+    assert "LoadPalette" in asm
+    assert "lea level_pal" in asm
+    assert "lea level_tiles" in asm
+    assert "lea level_map" in asm
+    assert "level_pal.s" in asm
+    assert "level_tiles.s" in asm
+    assert "level_map.s" in asm
+    gen = tmp_path / "tiles" / "gen"
+    tiles = (gen / "level_tiles.s").read_text(encoding="utf-8")
+    assert "DATA_C" in tiles.replace("\t", " ")
+    assert "level_tiles_palette:" not in tiles
+    mmap = (gen / "level_map.s").read_text(encoding="utf-8")
+    assert "SECTION tilemap,DATA" in mmap.replace("\t", " ")
+    assert "DATA_C" not in mmap

@@ -1648,6 +1648,7 @@ def parse(
                         label=asset.label,
                         options=dict(asset.options),
                         gen_path=asset.gen_path,
+                        labels=list(asset.labels) if asset.labels else [],
                     )
                 )
                 # Keep line numbers stable: blank the directive line.

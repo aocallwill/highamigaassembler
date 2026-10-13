@@ -5,7 +5,7 @@ alwaysApply: true
 
 # HAS (High Assembler) — Project Rules
 
-Python compiler: `.has` → Motorola 68000/68020 assembly for Amiga (`vasm` + `vlink`). Version 0.9.8, assembly-first, not production-ready.
+Python compiler: `.has` → Motorola 68000/68020 assembly for Amiga (`vasm` + `vlink`). Version 0.9.9, assembly-first, not production-ready.
 
 ## Pipeline
 

@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#include-directive" },
+    { "include": "#import-directive" },
     { "include": "#strings" },
     { "include": "#directives" },
     { "include": "#asm-block" },
@@ -13,12 +14,12 @@
     { "include": "#sections" },
     { "include": "#keywords" },
     { "include": "#types" },
-    { "include": "#instructions" },
     { "include": "#registers" },
     { "include": "#numbers" },
     { "include": "#operators" },
     { "include": "#suffixes" }
   ],
+
   "repository": {
     "asm-block": {
       "begin": "\\b(asm)\\s*\\{",
@@ -33,10 +34,12 @@
           "match": ";.*$"
         },
         { "include": "#strings" },
+        { "include": "#pseudo-ops" },
         { "include": "#instructions" },
         { "include": "#registers" },
         { "include": "#numbers" },
-        { "include": "#operators" }
+        { "include": "#operators" },
+        { "include": "#suffixes" }
       ]
     },
     "comments": {
@@ -77,12 +80,16 @@
           "match": "^\\s*#ifndef\\b"
         },
         {
+          "name": "keyword.directive.else.highamigassembler",
+          "match": "^\\s*#else\\b"
+        },
+        {
           "name": "keyword.directive.endif.highamigassembler",
           "match": "^\\s*#endif\\b"
         },
         {
           "name": "keyword.directive.highamigassembler",
-          "match": "^\\s*(#(?:warning|error|pragma|else))\\b",
+          "match": "^\\s*(#(?:warning|error|pragma))\\b",
           "captures": {
             "1": { "name": "keyword.directive.highamigassembler" }
           }
@@ -102,7 +109,7 @@
             "0": { "name": "punctuation.definition.string.end.highamigassembler" }
           },
           "name": "meta.preprocessor.include.highamigassembler",
-          "contentName": "string.quoted.double.highamigassembler"
+          "contentName": "string.quoted.other.highamigassembler"
         },
         {
           "begin": "^\\s*(#include)\\s+(\")",
@@ -116,6 +123,50 @@
           },
           "name": "meta.preprocessor.include.highamigassembler",
           "contentName": "string.quoted.double.highamigassembler"
+        }
+      ]
+    },
+    "import-directive": {
+      "patterns": [
+        {
+          "begin": "^\\s*(#import)\\s+(bob|palette|sprite|atlas|tileset|tilemap)\\b",
+          "beginCaptures": {
+            "1": { "name": "keyword.directive.import.highamigassembler" },
+            "2": { "name": "support.type.import-kind.highamigassembler" }
+          },
+          "end": ";",
+          "endCaptures": {
+            "0": { "name": "punctuation.terminator.statement.highamigassembler" }
+          },
+          "name": "meta.preprocessor.import.highamigassembler",
+          "patterns": [
+            { "include": "#strings" },
+            {
+              "name": "keyword.other.import-as.highamigassembler",
+              "match": "\\bas\\b"
+            },
+            {
+              "name": "support.variable.import-option.highamigassembler",
+              "match": "\\b(?:planes|colors|dither|add_word|shared_palette|dedupe|sprites|atlas_png|tile_w|tile_h|tile_width|tile_height|match_palette|strict_palette|layer|allow_flip|index_size|firstgid|tileset|kind|vstart|vstop|index0|requantize|restore_original_size)\\b"
+            },
+            {
+              "name": "entity.name.label.import.highamigassembler",
+              "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+            },
+            { "include": "#numbers" },
+            {
+              "name": "keyword.operator.assignment.highamigassembler",
+              "match": "="
+            },
+            {
+              "name": "punctuation.separator.comma.highamigassembler",
+              "match": "[,+]"
+            }
+          ]
+        },
+        {
+          "name": "keyword.directive.import.highamigassembler",
+          "match": "^\\s*#import\\b"
         }
       ]
     },
@@ -182,11 +233,19 @@
         }
       ]
     },
+    "pseudo-ops": {
+      "patterns": [
+        {
+          "name": "keyword.other.pseudo-op.highamigassembler",
+          "match": "(?i)\\b(?:dc|dcb|ds|even|cnop|section|xdef|xref|equ|set|org|end|incbin|rept|endr|macro|endm|ifd|ifnd|ifne|ifeq|else|endif|include)\\b"
+        }
+      ]
+    },
     "instructions": {
       "patterns": [
         {
           "name": "keyword.other.instruction.highamigassembler",
-          "match": "\\b(?:MOVE|ADD|SUB|MUL|DIV|AND|OR|EOR|NOT|CLR|LEA|JSR|JMP|RTS|BRA|BSR|CMP|TST|SWAP|EXT|NEG|NOP|BCC|BNE|BEQ|BGE|BGT|BLE|BLT|DBRA|DBF|SCC|SNE|SEQ|SGE|SGT|SLE|SLT)\\b"
+          "match": "(?i)\\b(?:move|movem|moveq|add|addi|addq|addx|sub|subi|subq|subx|mulu|muls|divu|divs|and|andi|or|ori|eor|eori|not|clr|lea|pea|jsr|jmp|rts|rtr|rte|bra|bsr|bcc|bcs|bne|beq|bge|bgt|ble|blt|bhi|bls|bvc|bvs|bpl|bmi|dbra|dbf|dbne|dbeq|scc|scs|sne|seq|sge|sgt|sle|slt|shi|sls|svc|svs|spl|smi|tst|swap|ext|extb|neg|negx|nop|link|unlk|chk|trap|stop|reset|btst|bset|bclr|bchg|asl|asr|lsl|lsr|rol|ror|roxl|roxr|abcd|sbcd|nbcd|cmp|cmpi|cmpa|cmpm|exg)\\b"
         }
       ]
     },
@@ -194,7 +253,7 @@
       "patterns": [
         {
           "name": "variable.language.register.highamigassembler",
-          "match": "\\b(?:d[0-7]|a[0-7])\\b"
+          "match": "(?i)\\b(?:d[0-7]|a[0-7]|sp|pc|sr|ccr)\\b"
         }
       ]
     },
@@ -222,7 +281,7 @@
         },
         {
           "name": "keyword.operator.comparison.highamigassembler",
-          "match": "==|!=|<=|>=|<<|>>"
+          "match": "==|!=|<=|>=|<<|>>|<>"
         },
         {
           "name": "keyword.operator.logical.highamigassembler",
@@ -246,7 +305,7 @@
       "patterns": [
         {
           "name": "storage.modifier.size-suffix.highamigassembler",
-          "match": "\\.[bwl]\\b"
+          "match": "(?i)\\.[bwl]\\b"
         }
       ]
     }

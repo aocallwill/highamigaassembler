@@ -3,6 +3,16 @@
 `tools/texturepacker_atlas_importer.py` converts a TexturePacker XML atlas and PNG into Amiga BOB
 assembly files. All frames use one shared quantized palette, so they can be used as an animation.
 
+For in-language compile-time import (preferred for single-module games), use:
+
+```has
+#import atlas "assets/walk.xml" as walk planes=5 add_word shared_palette;
+// Registers walk_palette + walk_<frame>…; INCLUDEs build/gen/walk_atlas.s
+```
+
+See README / [SPRITE_TOOLS_QUICK_REFERENCE.md](SPRITE_TOOLS_QUICK_REFERENCE.md). The CLI below
+remains useful for Makefile batch pipelines and when you need finer control over output layout.
+
 ## Basic Usage
 
 ```bash

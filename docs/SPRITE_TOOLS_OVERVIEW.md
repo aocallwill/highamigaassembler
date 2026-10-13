@@ -2,6 +2,11 @@
 
 This document provides an overview of the sprite and BOB import tools available in the HAS (High Assembler) project for the Amiga platform.
 
+For single assets and common pipelines, prefer in-language `#import`
+(`bob` / `palette` / `sprite` / `atlas` / `tileset` / `tilemap`) — see
+[SPRITE_TOOLS_QUICK_REFERENCE.md](SPRITE_TOOLS_QUICK_REFERENCE.md) and the README.
+The CLI tools below remain useful for strips, batch jobs, and Makefile flows.
+
 ## Tools Summary
 
 ### sprite_importer.py
@@ -74,16 +79,44 @@ python3 tools/texturepacker_atlas_importer.py walk.xml --outdir build/gen --dedu
 
 ---
 
+### tile_importer.py
+**Purpose**: Convert PNG tile grids/strips to chip planar tile graphics  
+**Location**: `tools/tile_importer.py`  
+**In-language**: `#import tileset "tiles.png" as tiles tile_w=16 …;`
+
+**Use case**: Tile-based backgrounds; optional `match_palette=` via `#import`
+
+**Example**:
+```bash
+python3 tools/tile_importer.py tileset.png --tile-width 16 --tile-height 16 --outdir build/gen
+```
+
+---
+
+### tiled_map_importer.py
+**Purpose**: Convert Tiled orthogonal `.tmx` / `.json` maps to index grids  
+**Location**: `tools/tiled_map_importer.py`  
+**In-language**: `#import tilemap "level.tmx" as map layer=Ground;`
+
+**Use case**: Level layout in fast RAM (`DATA`); pair with a tileset import for graphics
+
+**Example**:
+```bash
+python3 tools/tiled_map_importer.py level.tmx --layer Ground --outdir build/gen
+```
+
+---
+
 ## Quick Comparison
 
-| Feature | sprite_importer | sprite_strip_importer | bob_importer | bob_strip_importer | TexturePacker atlas |
-|---------|----------------|----------------------|--------------|-------------------|---------------------|
-| Input | Single PNG | Strip PNG | Single PNG | Strip PNG | XML + atlas PNG |
-| Output | 1 .s file | Multiple .s files | 1 .s file | Multiple .s files | Named BOB files |
-| Type | Hardware sprite | Hardware sprite | BOB (software) | BOB (software) | BOB (software) |
-| Width | 16px fixed | 16px fixed | Any width | Any width | Any width |
-| Colors | 4 | 4 | Up to 32 | Up to 32 | Up to 32, shared palette |
-| Use Case | Static HW sprites | HW sprite animations | Static BOBs | BOB animations | Packed named animations |
+| Feature | sprite_importer | sprite_strip_importer | bob_importer | bob_strip_importer | TexturePacker atlas | tile_importer | tiled_map_importer |
+|---------|----------------|----------------------|--------------|-------------------|---------------------|---------------|-------------------|
+| Input | Single PNG | Strip PNG | Single PNG | Strip PNG | XML + atlas PNG | Tile grid PNG | Tiled `.tmx`/`.json` |
+| Output | 1 .s file | Multiple .s files | 1 .s file | Multiple .s files | Named BOB files | 1 .s (planar tiles) | 1 .s (index grid) |
+| Type | Hardware sprite | Hardware sprite | BOB (software) | BOB (software) | BOB (software) | Chip tile graphics | Fast-RAM map indices |
+| Width | 16px fixed | 16px fixed | Any width | Any width | Any width | Tile 8/16 | Map cells |
+| Colors | 4 | 4 | Up to 32 | Up to 32 | Up to 32, shared palette | Up to 32 | N/A (indices) |
+| Use Case | Static HW sprites | HW sprite animations | Static BOBs | BOB animations | Packed named animations | Tile backgrounds | Level layout |
 
 ## When to Use Which Tool
 
@@ -113,6 +146,15 @@ python3 tools/texturepacker_atlas_importer.py walk.xml --outdir build/gen --dedu
 - ✅ Building BOB-based animations
 - ✅ Need more than 16 pixels width
 - ✅ Need more than 4 colors (up to 32 colors)
+
+### Use `tile_importer.py` / `#import tileset` when:
+- ✅ You have a PNG tile grid or strip for backgrounds
+- ✅ You need chip (`DATA_C`) row-interleaved planar tiles
+- ✅ Optional shared palette via `match_palette=` / `--match-bob-palette`
+
+### Use `tiled_map_importer.py` / `#import tilemap` when:
+- ✅ You author levels in Tiled (orthogonal `.tmx` / `.json`)
+- ✅ You need a fast-RAM width/height + index grid (not chip graphics)
 
 ## Common Workflow
 

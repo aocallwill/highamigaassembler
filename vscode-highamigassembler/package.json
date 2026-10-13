@@ -2,7 +2,7 @@
   "name": "vscode-highamigassembler",
   "displayName": "High Amiga Assembler",
   "description": "Syntax highlighting and navigation for the High Amiga Assembler (.has).",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "Piotr Rozentreter",
   "license": "MIT",
   "icon": "icon.png",
@@ -49,7 +49,7 @@
     "themes": [
       {
         "label": "High Amiga Assembler Colors",
-        "uiTheme": "vs",
+        "uiTheme": "vs-dark",
         "path": "./themes/highamigassembler-color-theme.json"
       }
     ],

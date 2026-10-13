@@ -46,13 +46,15 @@ You should see the HAS compiler help message.
 
 ### 3. Test with Example
 
-Compile a simple example:
+Compile a simple example to assembly:
 
 ```bash
 hasc examples/add.has -o test.s
 ```
 
-If successful, you'll have a `test.s` assembly file.
+If successful, you'll have a `test.s` assembly file. With `vasm` and `vlink` on
+`PATH`, you can also build an Amiga executable (or bootable ADF) in one step —
+see [§5](#5-build-complete-example).
 
 ### Packaged Resources
 
@@ -66,15 +68,17 @@ pipx runpip hasc show high-amiga-assembler
 
 The resources are installed below that environment's `share/high-amiga-assembler/` directory:
 `lib/`, `examples/`, `tools/`, `scripts/`, and `guicreator/`. Copy an example into a writable
-project directory before changing it. The included shell scripts are Linux-oriented; they require
-separately installed `vasm` and `vlink` when they assemble or link an executable.
+project directory before changing it. Prefer `hasc … --exe` / `--adf` for one-shot builds.
+Legacy `scripts/*.sh` helpers are Linux-oriented; both paths require separately installed
+`vasm` and `vlink` (ADF also needs `amitools` / `xdftool`).
 
 All packaged Python asset tools are available as `has-*` commands, for example:
 
 ```bash
 has-bob-importer image.png 5 --outdir include
 has-sprite-importer sprite.png --outdir include
-has-tile-importer tiles.png --help
+has-tile-importer tiles.png --tile-width 16 --help
+has-tiled-map-importer level.tmx --layer Ground --outdir build/gen
 has-gui-creator --help
 ```
 
@@ -115,15 +119,28 @@ vlink -h
 
 ### 5. Build Complete Example
 
-With vasm/vlink installed:
+With vasm/vlink installed, build an Amiga hunk executable in one step:
 
 ```bash
-# Compile HAS to assembly
-hasc examples/add.has -o add.s
-
-# Assemble and link
-./scripts/build.sh add.s add.o add
+hasc examples/mintest.has -o mintest.s --exe mintest.exe
 ```
+
+`--cpu 68000` (default) or `--cpu 68020` is passed through to both codegen and
+vasm (`-m68000` / `-m68020`). Programs that declare `extern` symbols auto-link
+matching files from `lib/` when providers are known.
+
+Optional bootable ADF (requires amitools / xdftool; install with
+`pip install amitools` or the package `tools` extra):
+
+```bash
+hasc examples/mintest.has -o mintest.s --adf disks/mintest.adf
+```
+
+The ADF includes the executable and `S/startup-sequence` so an emulator or
+real Amiga boots straight into the program.
+
+Legacy helpers still work: `./scripts/build.sh` (assemble/link) and
+`./scripts/create_disk.sh` (ADF from an existing exe).
 
 ### 6. Optional: Linux-Only Musashi Runtime Test Tier
 
@@ -205,7 +222,7 @@ python -m hasc.cli examples/shift_operators_demo.has -o /tmp/shift.s
     `dist/`. Pass an output directory as its first argument when needed.
 4. Install the produced wheel into a clean environment to verify `hasc --version` and a sample
     compilation.
-5. Commit the release changes, create a matching tag such as `v0.9.8`, and push the tag. The
+5. Commit the release changes, create a matching tag such as `v0.9.9`, and push the tag. The
     GitHub Release workflow verifies the tag/version match, rebuilds, tests, and attaches the
     wheel and source distribution to the release.
 6. In a clean Windows terminal, install the attached wheel with pipx, verify `where hasc`, and

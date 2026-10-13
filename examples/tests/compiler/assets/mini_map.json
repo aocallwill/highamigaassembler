@@ -1,0 +1,52 @@
+{
+  "compressionlevel": -1,
+  "height": 3,
+  "width": 4,
+  "tilewidth": 16,
+  "tileheight": 16,
+  "orientation": "orthogonal",
+  "renderorder": "right-down",
+  "infinite": false,
+  "layers": [
+    {
+      "data": [
+        1,
+        2,
+        1,
+        2,
+        2,
+        1,
+        2,
+        1,
+        1,
+        1,
+        2,
+        2
+      ],
+      "height": 3,
+      "width": 4,
+      "id": 1,
+      "name": "Ground",
+      "opacity": 1,
+      "type": "tilelayer",
+      "visible": true,
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "tilesets": [
+    {
+      "columns": 2,
+      "firstgid": 1,
+      "image": "mini_tiles.png",
+      "imageheight": 16,
+      "imagewidth": 32,
+      "name": "mini",
+      "tilecount": 2,
+      "tileheight": 16,
+      "tilewidth": 16
+    }
+  ],
+  "type": "map",
+  "version": "1.10"
+}

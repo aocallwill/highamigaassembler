@@ -42,10 +42,11 @@ code main:
     }
 ```
 
-Compile and run:
+Compile to an Amiga executable (requires vasm/vlink on `PATH`):
 ```bash
-python -m hasc.cli example.has -o out.s
-./scripts/build.sh out.s out.o out.exe
+.venv/bin/python3 -m hasc.cli example.has -o out.s --exe out.exe
+# Optional bootable floppy (requires amitools/xdftool):
+.venv/bin/python3 -m hasc.cli example.has -o out.s --adf disks/example.adf
 ```
 
 ---
@@ -1051,6 +1052,89 @@ without sign extension and so cannot be proven to fit a signed word. The pragma
 has no effect under `--cpu 68020`, where `muls.l`/`divsl.l` handle full 32-bit
 operands natively.
 
+#### Asset `#import`
+
+Compile-time conversion of PNGs, TexturePacker XML atlases, and Tiled maps.
+Generated `.s` files land under `build/gen` (override with `--asset-outdir`;
+force rebuild with `--force-assets`) and are `INCLUDE`d into the compiler
+output. Labels are addressable with `&label`.
+
+Kinds: `bob`, `palette`, `sprite`, `atlas`, `tileset`, `tilemap`. Import a
+palette/atlas **before** a tileset that uses `match_palette=`. Pillow is required
+for image kinds; `tilemap` alone does not need it. Full option tables:
+[SPRITE_TOOLS_QUICK_REFERENCE.md](SPRITE_TOOLS_QUICK_REFERENCE.md) and the README
+Asset Conversion section.
+
+##### Example: BOB
+
+```has
+#import bob "assets/player.png" as player_bob planes=5 add_word;
+
+code main:
+    extern func CreateBob(descriptor_ptr: int, save_background: int) -> int;
+    extern func DestroyBob(handle: int) -> void;
+
+    proc init() -> int {
+        var bob: int = CreateBob(&player_bob, 0);
+        if (bob == -1) {
+            return -1;
+        }
+        call DestroyBob(bob);
+        return 0;
+    }
+```
+
+Working regression: [import_bob_load_test.has](../examples/tests/compiler/import_bob_load_test.has).
+
+##### Example: hardware sprite
+
+PNG width must be exactly 16 pixels (2 planes / 4 colours).
+
+```has
+#import sprite "assets/bullet.png" as bullet;
+
+code main:
+    extern func CreateSprite(index: int, source_data: int) -> int;
+
+    proc init() -> int {
+        var spr: int = CreateSprite(0, &bullet);
+        if (spr == -1) {
+            return -1;
+        }
+        return 0;
+    }
+```
+
+Working regression: [import_sprite_load_test.has](../examples/tests/compiler/import_sprite_load_test.has).
+
+##### Example: tileset + tilemap
+
+Tileset graphics go in chip (`DATA_C`); the map is a fast-RAM (`DATA`) index
+grid (`DC.W width,height` then row-major indices). Share a palette by importing
+it first and passing `match_palette=`.
+
+```has
+#import palette "assets/tiles.png" as level_pal colors=16 dither=none;
+#import tileset "assets/tiles.png" as level_tiles tile_w=16 tile_h=16 planes=4 match_palette=level_pal;
+#import tilemap "assets/level.tmx" as level_map layer=Ground tileset=level_tiles;
+
+code main:
+    extern func LoadPalette(palette_ptr: int, num_colors: int) -> int;
+
+    proc init() -> int {
+        var tiles: int = &level_tiles;
+        var map: int = &level_map;
+        call LoadPalette(&level_pal, 16);
+        // tiles → planar chip data for your tile blitter
+        // map  → word width/height + indices (see tiled_map_importer)
+        return 0;
+    }
+```
+
+Working regression: [import_tiles_load_test.has](../examples/tests/compiler/import_tiles_load_test.has).
+Also: [import_atlas_load_test.has](../examples/tests/compiler/import_atlas_load_test.has),
+[import_bob_sprite_load_test.has](../examples/tests/compiler/import_bob_sprite_load_test.has).
+
 Conditional compilation directives are resolved at compile time:
 
 ```has
@@ -1555,22 +1639,31 @@ See [examples/cpu_detection.has](../examples/cpu_detection.has) for a complete e
 ### Basic Compilation
 ```bash
 # Compile .has to assembly
-python -m hasc.cli example.has -o out.s
+.venv/bin/python3 -m hasc.cli example.has -o out.s
+
+# One-shot Amiga hunk executable (requires vasm/vlink on PATH)
+.venv/bin/python3 -m hasc.cli example.has -o out.s --exe out.exe
+
+# Bootable DD ADF (implies --exe; needs amitools/xdftool)
+.venv/bin/python3 -m hasc.cli example.has -o out.s --adf disks/example.adf
+
+# #import asset cache control
+.venv/bin/python3 -m hasc.cli example.has -o out.s --asset-outdir build/gen --force-assets
 
 # With code generation
-python -m hasc.cli example.has --generate generator.py -o out.s
+.venv/bin/python3 -m hasc.cli example.has --generate generator.py -o out.s
 
 # Skip validation
-python -m hasc.cli example.has --no-validate -o out.s
+.venv/bin/python3 -m hasc.cli example.has --no-validate -o out.s
 
 # Emit debug annotations (source line comments)
-python -m hasc.cli example.has --annotate -o out.s
+.venv/bin/python3 -m hasc.cli example.has --annotate -o out.s
 
 # Explicitly enable build statistics comments (default)
-python -m hasc.cli example.has --asm-stats -o out.s
+.venv/bin/python3 -m hasc.cli example.has --asm-stats -o out.s
 
 # Disable build statistics comments
-python -m hasc.cli example.has --no-asm-stats -o out.s
+.venv/bin/python3 -m hasc.cli example.has --no-asm-stats -o out.s
 ```
 
 Generated assembly always starts with a HAS preamble comment (version/date).
@@ -1797,14 +1890,20 @@ counter:
 ```
 
 ### Building with vasm/vlink
-```bash
-# One-liner using provided build script
-./scripts/build.sh out.s out.o out.exe
 
-# Manual assembly and linking
-vasm -Felf -m68000 out.s -o out.o
-vlink -belf out.o -o out.exe
+Preferred: one-shot from `hasc` (assemble `-Fhunk`, link `-bamigahunk`; auto-links
+known `lib/` providers for `extern` symbols):
+
+```bash
+.venv/bin/python3 -m hasc.cli out.has -o out.s --exe out.exe
+# Bootable DD ADF with S/startup-sequence (needs amitools/xdftool):
+.venv/bin/python3 -m hasc.cli out.has -o out.s --adf disks/out.adf
 ```
+
+`--cpu 68000` (default) or `--cpu 68020` is passed to both codegen and vasm.
+Override tool paths with `VASM`, `VLINK`, or `XDFTOOL` if needed.
+
+Legacy helpers: `./scripts/build.sh` and `./scripts/create_disk.sh`.
 
 ---
 
@@ -1891,9 +1990,8 @@ code test:
     }
 EOF
 
-# Compile and verify
-python -m hasc.cli test_add.has -o test.s
-./scripts/build.sh test.s test.o test.exe
+# Compile and verify (optional: --exe / --adf when vasm+vlink installed)
+.venv/bin/python3 -m hasc.cli test_add.has -o test.s --exe test.exe
 ```
 
 ---
@@ -1908,8 +2006,9 @@ python -m hasc.cli test_add.has -o test.s
 - [x] **Control Flow** - if/else, loops, break/continue
 - [x] **Operators** - arithmetic, logical, bitwise
 - [x] **Advanced** - macros, @python, inline asm
-- [x] **Directives** - #warning, #error, #pragma
+- [x] **Directives** - #warning, #error, #pragma, `#import` assets
 - [x] **External Integration** - extern func, code generation
+- [x] **One-shot build** - `hasc --exe` / `--adf` (vasm + vlink; ADF needs amitools)
 
 ---
 

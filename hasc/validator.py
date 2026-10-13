@@ -173,25 +173,28 @@ class Validator:
                         self.extern_funcs[item.name] = []
 
         # Register #import labels as addressable globals (no XREF; INCLUDE supplies defs).
+        # Atlas imports register palette + every frame label.
         seen_import_labels = set()
         for asset in getattr(self.module, "asset_imports", None) or []:
-            if asset.label in seen_import_labels:
-                self.errors.append(f"Duplicate #import label '{asset.label}'")
-                continue
-            seen_import_labels.add(asset.label)
-            if (
-                asset.label in self.globals
-                or asset.label in self.extern_vars
-                or asset.label in self.proc_funcs
-                or asset.label in self.extern_funcs
-                or asset.label in self.macros
-                or asset.label in self.constants
-            ):
-                self.errors.append(
-                    f"Imported asset label '{asset.label}' conflicts with an existing symbol"
-                )
-            else:
-                self.globals.add(asset.label)
+            symbols = list(getattr(asset, "labels", None) or []) or [asset.label]
+            for sym in symbols:
+                if sym in seen_import_labels:
+                    self.errors.append(f"Duplicate #import label '{sym}'")
+                    continue
+                seen_import_labels.add(sym)
+                if (
+                    sym in self.globals
+                    or sym in self.extern_vars
+                    or sym in self.proc_funcs
+                    or sym in self.extern_funcs
+                    or sym in self.macros
+                    or sym in self.constants
+                ):
+                    self.errors.append(
+                        f"Imported asset label '{sym}' conflicts with an existing symbol"
+                    )
+                else:
+                    self.globals.add(sym)
         
         # Second pass: validate procedure bodies
         for item in self.module.items:

@@ -50,25 +50,80 @@ python3 tools/sprite_strip_importer.py explosion.png 32 --label-prefix expl --ou
 
 ---
 
-## `#import` (in-language bob / palette / sprite)
+## `#import` (in-language bob / palette / sprite / atlas / tileset / tilemap)
 
 ```has
 #import bob "player.png" as player_bob planes=5 add_word;
 #import palette "sky.png" as sky_pal colors=32 dither=ordered;
 #import sprite "bullet.png" as bullet;   // exactly 16px wide, 4 colours / 2 planes
+#import atlas "walk.xml" as walk planes=5 add_word shared_palette;
+// → walk_palette, walk_<frame_stem>, master INCLUDE walk_atlas.s
+#import tileset "tiles.png" as level_tiles tile_w=16 tile_h=16 planes=5 match_palette=walk_palette;
+#import tilemap "level.tmx" as level_map layer=Ground;
 ```
 
-Compile with `hasc` (Pillow required). Generated files land in `build/gen`
-(`--asset-outdir` / `--force-assets`). Use `&label` with `CreateBob` /
-`LoadPalette` / `CreateSprite`.
+Compile with `hasc` (Pillow required for image kinds; tilemap alone does not).
+Generated files land in `build/gen` (`--asset-outdir` / `--force-assets`).
+Use `&label` with `CreateBob` / `LoadPalette` / `CreateSprite` / tile blitters.
+Import the palette source **before** a tileset that uses `match_palette=`.
 
 | Kind | Constraints |
 |------|-------------|
-| `bob` | `planes=1..5`; `add_word` adds +16px for blitter X-shift |
-| `palette` | `colors=16\|32` or `planes=` |
+| `bob` | `planes=1..5`; `add_word` adds +16px for blitter X-shift; `dither=none\|fs` |
+| `palette` | `colors=2..32` (typical 16/32) or `planes=`; `dither=none\|fs\|ordered` |
 | `sprite` | PNG width **must be 16**; fixed 2 planes / 4 colours |
+| `atlas` | TexturePacker XML; `kind=bob` only; `shared_palette` (default), `dedupe`, `sprites=a,b`, `atlas_png=` |
+| `tileset` | PNG; `tile_w=8\|16`, `tile_h`, `planes`, `dither=none\|fs`, `match_palette=<label>`, `strict_palette` |
+| `tilemap` | Tiled `.tmx`/`.json`; `layer=`, `allow_flip`, `index_size=b\|w`, `firstgid=`, optional `tileset=` |
 
-Strips, atlases, and tiles still use the CLI tools below.
+### Usage examples
+
+**BOB** — descriptor → `CreateBob`:
+
+```has
+#import bob "player.png" as player_bob planes=5 add_word;
+
+code main:
+    extern func CreateBob(descriptor_ptr: int, save_background: int) -> int;
+    proc init() -> int {
+        return CreateBob(&player_bob, 0);
+    }
+```
+
+**Sprite** — 16px-wide PNG → `CreateSprite`:
+
+```has
+#import sprite "bullet.png" as bullet;
+
+code main:
+    extern func CreateSprite(index: int, source_data: int) -> int;
+    proc init() -> int {
+        return CreateSprite(0, &bullet);
+    }
+```
+
+**Tiles** — shared palette + chip tileset + fast-RAM map:
+
+```has
+#import palette "tiles.png" as level_pal colors=16;
+#import tileset "tiles.png" as level_tiles tile_w=16 tile_h=16 planes=4 match_palette=level_pal;
+#import tilemap "level.tmx" as level_map layer=Ground;
+
+code main:
+    extern func LoadPalette(palette_ptr: int, num_colors: int) -> int;
+    proc init() -> int {
+        call LoadPalette(&level_pal, 16);
+        var tiles: int = &level_tiles;  // DATA_C planar tiles
+        var map: int = &level_map;      // DATA: width, height, indices
+        return 0;
+    }
+```
+
+Regression sources under `examples/tests/compiler/`:
+`import_bob_load_test.has`, `import_sprite_load_test.has`,
+`import_tiles_load_test.has`, `import_atlas_load_test.has`.
+
+CLI tools below remain available for Makefile batch jobs.
 
 ---
 

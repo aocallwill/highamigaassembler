@@ -73,3 +73,7 @@ def texturepacker_atlas_importer() -> None:
 
 def tile_importer() -> None:
     _run_tool("tile_importer.py")
+
+
+def tiled_map_importer() -> None:
+    _run_tool("tiled_map_importer.py")

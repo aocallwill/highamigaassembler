@@ -239,8 +239,8 @@ python3 -m hasc.cli examples/use_external.has -o main.o.s
 grep "XREF\\|XDEF" library.o.s
 grep "XREF\\|XDEF" main.o.s
 
-# Assemble and link
+# Assemble and link (multi-module: manual objects; single-file programs can use hasc --exe)
 vasmm68k_mot -Fhunk -o library.o library.o.s
 vasmm68k_mot -Fhunk -o main.o main.o.s
-vlink -b -o program library.o main.o
+vlink -bamigahunk library.o main.o -o program
 ```

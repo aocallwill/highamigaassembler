@@ -320,11 +320,9 @@ Two double-buffered screens for HAM6:
 Test HAM6 support:
 
 ```bash
-# Compile HAM6 test program
-python -m hasc.cli examples/tests/compiler/ham6_display_test.has -o ham6_test.s
-
-# Assemble and link (requires vasm/vlink)
-./scripts/build.sh ham6_test.s ham6_test.o ham6_test.exe
+# Compile + link (requires vasm/vlink on PATH)
+.venv/bin/python3 -m hasc.cli examples/tests/compiler/ham6_display_test.has \
+  -o ham6_test.s --exe ham6_test.exe
 ```
 
 Load and run `ham6_test.exe` in an Amiga emulator to verify:

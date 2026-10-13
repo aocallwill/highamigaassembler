@@ -4,16 +4,37 @@ All notable changes to the HAS (High Assembler) project will be documented in th
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-10-13
+
 ### Added
 
-- **`#import bob|palette|sprite` preprocessor directive:** compile-time PNG
-  import that runs `tools/bob_importer` / `tools/amiga_palette` /
-  `tools/sprite_importer`, caches generated `.s` under `build/gen` (CLI:
-  `--asset-outdir`, `--force-assets`), registers the `as` label for `&label`,
-  and appends vasm `INCLUDE` lines to the compiler output. Hardware sprites
-  require an exactly 16-pixel-wide PNG (2 planes / 4 colours). BOB imports
-  support `add_word` for blitter X-shift padding. Example:
-  `#import bob "player.png" as player_bob planes=5 add_word;`.
+- **One-shot Amiga build from `hasc`:** `--exe PATH` runs vasm (`-Fhunk`,
+  CPU-matched `-m68000`/`-m68020`) then `vlink -bamigahunk` after a successful
+  compile; `--adf PATH` builds a bootable DD ADF with `S/startup-sequence`
+  (implies `--exe`; default exe is the ADF path with `.exe`). Auto-selects
+  `lib/*.s` for known `extern` symbols. Env overrides: `VASM`, `VLINK`,
+  `XDFTOOL`. Requires separately installed vasm/vlink; ADF needs amitools.
+
+- **`#import bob|palette|sprite|atlas|tileset|tilemap` preprocessor directive:**
+  compile-time PNG / TexturePacker XML / Tiled map import that runs
+  `tools/bob_importer`, `tools/amiga_palette`, `tools/sprite_importer`,
+  `tools/texturepacker_atlas_importer`, `tools/tile_importer`, and
+  `tools/tiled_map_importer`, caches generated `.s` under `build/gen`
+  (CLI: `--asset-outdir`, `--force-assets`), registers labels for `&…`, and
+  appends vasm `INCLUDE` lines. Hardware sprites require an exactly 16-pixel-wide
+  PNG. BOB / atlas imports support `add_word`. Atlas imports default to a shared
+  palette and register `prefix_palette` plus every frame label. Tileset and
+  tilemap are separate: tileset emits chip planar tiles (optional
+  `match_palette=` remaps onto a prior palette/atlas label and omits a private
+  palette); tilemap emits a fast-RAM index grid from Tiled `.tmx`/`.json`.
+  Examples: `#import atlas "walk.xml" as walk planes=5 add_word shared_palette;`,
+  `#import tileset "tiles.png" as tiles tile_w=16 match_palette=walk_palette;`,
+  `#import tilemap "level.tmx" as map layer=Ground;`.
+  Packaged CLI entry: `has-tiled-map-importer`.
+  Worked examples:
+  [import_bob_load_test.has](../examples/tests/compiler/import_bob_load_test.has),
+  [import_sprite_load_test.has](../examples/tests/compiler/import_sprite_load_test.has),
+  [import_tiles_load_test.has](../examples/tests/compiler/import_tiles_load_test.has).
 
 - **PNG → Amiga 16/32-colour palette tool:** `tools/png_to_amiga_palette.py`
   (helpers in `tools/amiga_palette.py`) converts many-colour PNGs to OCS/ECS

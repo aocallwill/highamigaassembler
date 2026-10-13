@@ -1,6 +1,6 @@
 ﻿# HAS - High Assembler for Motorola 68000 (Amiga)
 
-**Version:** 0.9.8
+**Version:** 0.9.9
 
 **We invite you to join the community!** If you're interested in Amiga development, compiler design, or just want to contribute to an exciting project, we'd love to have you on board. Whether you're fixing bugs, adding features, improving documentation, or testing - all contributions are welcome!
 
@@ -49,7 +49,7 @@ If a feature cannot preserve predictable assembly behavior, it belongs in toolin
 - **Macro System**: Define reusable code patterns
 - **@python Directive**: Execute Python code during compilation
 - **Include System**: Modular code organization with `#include`
-- **Asset Import**: `#import bob|palette|sprite "file.png" as label …;` converts PNGs at compile time (via `tools/`), caches under `build/gen`, and `INCLUDE`s them into the output object — use `&label` with `CreateBob` / `LoadPalette` / `CreateSprite`
+- **Asset Import**: `#import bob|palette|sprite|atlas|tileset|tilemap …;` converts PNGs / TexturePacker XML / Tiled maps at compile time (via `tools/`), caches under `build/gen`, and `INCLUDE`s them into the output object — use `&label` with `CreateBob` / `LoadPalette` / `CreateSprite` / tile blitters
 - **Constants**: Compile-time constant evaluation
 - **Conditional Compilation**: `#ifdef`, `#ifndef`, `#else`, `#endif` gates using `const` values; `#if IDENT OP EXPR` for comparison-based gating (`==`/`=`, `!=`/`<>`, `>`, `<`, `>=`, `<=`)
 - **Pointer Arithmetic**: Address-of (`&`) and dereference (`*`) operators
@@ -146,11 +146,26 @@ assembly remains the programmer's responsibility. Full-extension addressing,
 memory-indirect forms, `.w` index selection, and other 68020 instruction-set
 optimizations are not enabled.
 
-**Assemble and link** (requires vasm/vlink):
+**One-shot Amiga executable** (requires `vasm` + `vlink` on `PATH`):
 
 ```bash
-./scripts/build.sh hello.s hello.o hello.exe
+hasc hello.has -o hello.s --exe hello.exe
 ```
+
+**Bootable ADF** (also needs `amitools` / `xdftool`; implies building an exe):
+
+```bash
+hasc hello.has -o hello.s --adf disks/hello.adf
+# or keep an explicit exe path:
+hasc hello.has -o hello.s --exe build/hello.exe --adf disks/hello.adf
+```
+
+The ADF is a standard DD floppy image with `S/startup-sequence` that launches
+the program on Amiga startup (FS-UAE / real hardware). Override tool paths with
+`VASM`, `VLINK`, or `XDFTOOL` if needed.
+
+Legacy two-step scripts remain available: `./scripts/build.sh` and
+`./scripts/create_disk.sh`.
 
 ## 📖 Documentation
 
@@ -361,11 +376,15 @@ debug aid only and has no effect on compiled program behavior.
 ### Build Complete Executable
 
 ```bash
-# Compile HAS to assembly
-python -m hasc.cli program.has -o program.s
+# One-shot: HAS → vasm → vlink (requires vasm/vlink on PATH)
+.venv/bin/python3 -m hasc.cli program.has -o program.s --exe program.exe
 
-# Assemble and link (requires vasm/vlink)
-./scripts/build.sh program.s program.o program.exe
+# Optional bootable floppy image (requires amitools/xdftool)
+.venv/bin/python3 -m hasc.cli program.has -o program.s --adf disks/program.adf
+
+# Legacy script path
+./scripts/build.sh program.has program.o program.exe
+./scripts/create_disk.sh program program.exe
 ```
 
 ### Run VBCC Interop Tests
@@ -636,7 +655,7 @@ HAS follows Motorola 68000 standard calling convention:
 
 ## 🛠️ Development Status
 
-**Version 0.9.8** - Active Development
+**Version 0.9.9** - Active Development
 
 This compiler is actively being developed. Current focus areas:
 
@@ -694,37 +713,53 @@ This compiler is actively being developed. Current focus areas:
 - `lark-parser` - Parser generator
 - `Pillow` (PIL) - Image processing (optional, for asset tools)
 
-**External Tools** (optional, for full build):
+**External Tools** (optional, for full build / ADF):
 
-- `vasm` - Motorola 68000 assembler
-- `vlink` - Linker for Amiga executables
+- `vasm` - Motorola 68000 assembler (`hasc --exe`)
+- `vlink` - Linker for Amiga executables (`hasc --exe`)
+- `amitools` / `xdftool` - Bootable ADF creation (`hasc --adf`)
 - Amiga emulator (e.g., FS-UAE, WinUAE) for testing
 
 ## 🛠️ Asset Conversion Tools
 
-The `tools/` directory contains Python utilities for converting graphics and assets into Amiga-compatible formats. All tools generate assembly `.s` files. Prefer in-language `#import` for single bob/palette assets; use the CLI tools for strips, atlases, and batch work.
+The `tools/` directory contains Python utilities for converting graphics and assets into Amiga-compatible formats. All tools generate assembly `.s` files. Prefer in-language `#import` for bob / palette / sprite / atlas / tileset / tilemap when possible; use the CLI tools for strips and Makefile batch jobs.
 
-### In-language `#import` (bob / palette)
+### In-language `#import` (bob / palette / sprite / atlas / tileset / tilemap)
 
 ```has
 #import bob "assets/player.png" as player_bob planes=5 add_word;
 #import palette "assets/sky.png" as sky_pal colors=32 dither=ordered;
 #import sprite "assets/bullet.png" as bullet;   // must be exactly 16px wide, 4 colours
+#import atlas "assets/walk.xml" as walk planes=5 add_word shared_palette;
+#import tileset "assets/tiles.png" as level_tiles tile_w=16 tile_h=16 planes=5 match_palette=walk_palette;
+#import tilemap "assets/level.tmx" as level_map layer=Ground;
 
 code main:
     proc init() -> int {
         var id: int = CreateBob(&player_bob, 1);
         call LoadPalette(&sky_pal, 32);
         call CreateSprite(0, &bullet);
+        call LoadPalette(&walk_palette, 32);
+        var f0: int = CreateBob(&walk_walk_0, 0);  // prefix + frame stem
+        var tiles: int = &level_tiles;             // chip planar tiles
+        var map: int = &level_map;                 // DATA index grid
         return 0;
     }
 ```
 
 - Generates `.s` under `build/gen` (override with `--asset-outdir`); skips rebuild when cache is fresh (`--force-assets` to regenerate).
-- Requires Pillow only when an `#import` is present.
-- **bob:** `planes=1..5`, optional `add_word` (extra 16px word for blitter X-shift / cookie-cut).
+- Pillow is required for image kinds (`bob` / `palette` / `sprite` / `atlas` / `tileset`); `tilemap` alone does not need Pillow.
+- **bob:** `planes=1..5`, optional `add_word` (extra 16px word for blitter X-shift / cookie-cut), optional `dither=none|fs`.
 - **sprite:** fixed 2 bitplanes / 4 colours; PNG width must be exactly 16px (no silent resize).
-- **palette:** `colors=16|32` (or `planes=`); tiles/atlas strips stay as standalone tools.
+- **palette:** `colors=2..32` (typical `16`/`32`) or `planes=`; optional `dither=none|fs|ordered`.
+- **atlas:** TexturePacker XML → shared-palette BOBs (`kind=bob` only); registers `<as>_palette` plus every frame label; options `planes`, `add_word`, `shared_palette`, `dedupe`, `sprites=a,b`, `atlas_png=…`.
+- **tileset:** PNG grid → chip (`DATA_C`) row-interleaved tiles; `tile_w=8|16`, `tile_h`, `planes`, optional `match_palette=<label>` (import that palette/atlas first; omits a private palette copy).
+- **tilemap:** Tiled `.tmx` / `.json` → fast RAM (`DATA`) width/height + row-major indices; options `layer=`, `allow_flip`, `index_size=b|w`, `firstgid=`, optional `tileset=` (documentation only).
+
+Worked examples (bob / sprite / tiles): see
+[docs/DEVELOPERS_GUIDE.md](docs/DEVELOPERS_GUIDE.md) (Asset `#import`) and
+`examples/tests/compiler/import_bob_load_test.has`,
+`import_sprite_load_test.has`, `import_tiles_load_test.has`.
 
 ### Graphics & Sprite Tools
 
@@ -774,7 +809,13 @@ code main:
   - Supports row-interleaved 5-plane format for tile-based rendering
   - Extracts individual tiles from tile strips
   - Applies color quantization and supports dithering
-  - Example: `python3 tools/tile_importer.py tileset.png 16` (16x16 tiles)
+  - Prefer `#import tileset …;` when possible; CLI for Makefile batch jobs
+  - Example: `python3 tools/tile_importer.py tileset.png --tile-width 16 --tile-height 16 --outdir build/gen`
+
+- **`tiled_map_importer.py`** - Convert Tiled orthogonal TMX/JSON maps to index grids
+  - Emits `DC.W width,height` plus row-major 0-based tile indices (`DATA`, not chip)
+  - Prefer `#import tilemap …;` when possible
+  - Example: `python3 tools/tiled_map_importer.py level.tmx --layer Ground --outdir build/gen`
 
 - **`iff_importer.py`** - Import IFF/ILBM format images
   - Reads Amiga IFF ILBM (InterLeaved BitMap) files

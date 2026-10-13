@@ -566,9 +566,11 @@ class CodeGen:
                         if size not in ('b', 'w', 'l'):
                             size = 'l'
                         globals_map[var.name] = {'size': size, 'signed': getattr(var, 'signed', False)}
-        # #import bob|palette labels: addressable symbols defined via INCLUDE at file end.
+        # #import labels: addressable symbols defined via INCLUDE at file end.
         for asset in getattr(module, "asset_imports", None) or []:
-            globals_map.setdefault(asset.label, {'size': 'l', 'signed': False})
+            symbols = list(getattr(asset, "labels", None) or []) or [asset.label]
+            for sym in symbols:
+                globals_map.setdefault(sym, {'size': 'l', 'signed': False})
         return globals_map
 
     def _build_struct_info(self, module: ast.Module):
@@ -4534,7 +4536,7 @@ class CodeGen:
 
         output_path = getattr(self, "output_path", None)
         self.emit("")
-        self.emit("; ---- #import bob|palette assets (auto-generated) ----")
+        self.emit("; ---- #import bob|palette|sprite|atlas|tileset|tilemap assets (auto-generated) ----")
         for asset in assets:
             inc = asset_import_mod.include_path_for_output(asset.gen_path, output_path)
             self.emit(f'\tINCLUDE\t"{inc}"')
