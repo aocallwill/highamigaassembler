@@ -4,6 +4,15 @@ All notable changes to the HAS (High Assembler) project will be documented in th
 
 ## [Unreleased]
 
+### Fixed
+
+- **`amiga_gfx` / `amiga_gfx_demo` system crash:** two issues in
+  `lib/amiga_gfx.s`: (1) `GfxInit`/`GfxOpenScreen`/etc. did `link a6` then
+  overwrote `a6` with a library base and `unlk`’d it (stack corruption on
+  return); (2) `GfxFill`→`Flood()` needed a chip `TmpRas` on the draw
+  RastPort. Also draw via `Window->RPort`; demo opens LORES without
+  `MODE_SPRITES`.
+
 ### Added
 
 - **Live-induction `for` + `dbra`:** constant-bound `for i = start to end [by step]`

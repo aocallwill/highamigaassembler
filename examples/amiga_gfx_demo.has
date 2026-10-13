@@ -52,7 +52,8 @@ code amiga_gfx_demo:
             return -1;
         }
 
-        scr = GfxOpenScreen(0, 0, 320, 200, 3, GFX_MODE_SPRITES);
+        // LORES only — MODE_SPRITES is for GfxSprite* paths, not this smoke demo
+        scr = GfxOpenScreen(0, 0, 320, 200, 3, 0);
         if (scr == 0) {
             GfxShutdown();
             return -1;

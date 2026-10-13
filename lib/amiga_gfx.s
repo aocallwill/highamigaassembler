@@ -39,6 +39,12 @@ gfx_ns:         ds.b NS_SIZEOF
 gfx_nw:         ds.b NW_SIZEOF
 gfx_tmp_rp:     ds.b 100
 
+; Flood()/AreaFill scratch — chip plane + TmpRas header (InitTmpRas)
+gfx_tmpras:     ds.b TR_SIZEOF
+gfx_tmpras_buf: dc.l 0
+gfx_tmpras_w:   dc.w 0
+gfx_tmpras_h:   dc.w 0
+
     SECTION amiga_gfx_code,CODE
 
     XDEF GfxInit
@@ -68,7 +74,8 @@ gfx_tmp_rp:     ds.b 100
 ; =============================================================================
 GfxInit:
     link a6,#0
-    movem.l d1-d7/a0-a5,-(sp)
+    ; a6 must be saved: library calls use a6 as base; unlk needs the frame
+    movem.l d1-d7/a0-a6,-(sp)
     move.l gfx_int_base,d0
     beq .gi_open
     move.l gfx_gfx_base,d0
@@ -100,13 +107,13 @@ GfxInit:
 .gi_fail:
     moveq #-1,d0
 .gi_done:
-    movem.l (sp)+,d1-d7/a0-a5
+    movem.l (sp)+,d1-d7/a0-a6
     unlk a6
     rts
 
 GfxShutdown:
     link a6,#0
-    movem.l d0-d7/a0-a5,-(sp)
+    movem.l d0-d7/a0-a6,-(sp)
     bsr gfx_do_close_screen
     move.l ExecBase,a6
     move.l gfx_gfx_base,d0
@@ -121,15 +128,15 @@ GfxShutdown:
     jsr _LVOCloseLibrary(a6)
     clr.l gfx_int_base
 .gs_noint:
-    movem.l (sp)+,d0-d7/a0-a5
+    movem.l (sp)+,d0-d7/a0-a6
     unlk a6
     rts
 
 ; =============================================================================
 GfxOpenScreen:
     link a6,#0
-    movem.l d1-d7/a0-a5,-(sp)
-    move.l a6,a5
+    movem.l d1-d7/a0-a6,-(sp)
+    move.l a6,a5                          ; frame (params); a6 becomes lib base
     tst.l gfx_int_base
     beq .gos_fail
     tst.l gfx_gfx_base
@@ -175,18 +182,11 @@ GfxOpenScreen:
     move.l d0,gfx_screen
     beq .gos_fail
     move.l d0,a0
-    lea SC_RASTPORT(a0),a1
-    move.l a1,gfx_rp
     lea SC_VIEWPORT(a0),a1
     move.l a1,gfx_vp
-
-    move.l gfx_gfx_base,a6
-    move.l gfx_rp,a1
-    moveq #JAM1,d0
-    jsr _LVOSetDrMd(a6)
-    move.l gfx_rp,a1
-    moveq #1,d0
-    jsr _LVOSetAPen(a6)
+    ; Prefer Window->RPort once open (layered); provisional screen RP until then
+    lea SC_RASTPORT(a0),a1
+    move.l a1,gfx_rp
 
     lea gfx_nw,a0
     moveq #(NW_SIZEOF/2)-1,d0
@@ -210,29 +210,124 @@ GfxOpenScreen:
     move.l gfx_int_base,a6
     jsr _LVOOpenWindow(a6)
     move.l d0,gfx_window
-    bne .gos_ok
-    move.l gfx_screen,a0
+    beq .gos_win_fail
+    move.l d0,a0
+    move.l WD_RPORT(a0),d1
+    beq .gos_win_fail
+    move.l d1,gfx_rp
+
+    ; Flood() requires chip TmpRas on the RastPort we draw into
+    move.l 16(a5),d0                    ; width
+    move.l 20(a5),d1                    ; height
+    bsr gfx_setup_tmpras
+    tst.l d0
+    beq .gos_tmpras_fail
+
+    move.l gfx_gfx_base,a6
+    move.l gfx_rp,a1
+    moveq #JAM1,d0
+    jsr _LVOSetDrMd(a6)
+    move.l gfx_rp,a1
+    moveq #1,d0
+    jsr _LVOSetAPen(a6)
+
+    move.l gfx_screen,d0
+    bra .gos_done
+.gos_tmpras_fail:
+.gos_win_fail:
+    bsr gfx_close_window_safely
+.gos_close_scr:
+    move.l gfx_screen,d0
+    beq .gos_fail
+    move.l d0,a0
     move.l gfx_int_base,a6
     jsr _LVOCloseScreen(a6)
     clr.l gfx_screen
     clr.l gfx_rp
     clr.l gfx_vp
     bra .gos_fail
-.gos_ok:
-    move.l gfx_screen,d0
-    bra .gos_done
 .gos_fail:
     moveq #0,d0
 .gos_done:
-    movem.l (sp)+,d1-d7/a0-a5
+    movem.l (sp)+,d1-d7/a0-a6
     unlk a6
+    rts
+
+; d0=width, d1=height -> d0=1 ok / 0 fail. Attaches TmpRas to gfx_rp.
+gfx_setup_tmpras:
+    movem.l d1-d3/a0-a1/a6,-(sp)
+    move.l d0,d2
+    move.l d1,d3
+    ble .stm_fail
+    tst.l d2
+    ble .stm_fail
+    tst.l gfx_rp
+    beq .stm_fail
+    tst.l gfx_gfx_base
+    beq .stm_fail
+    bsr gfx_free_tmpras
+    move.l gfx_gfx_base,a6
+    move.l d2,d0
+    move.l d3,d1
+    jsr _LVOAllocRaster(a6)
+    tst.l d0
+    beq .stm_fail
+    move.l d0,gfx_tmpras_buf
+    move.w d2,gfx_tmpras_w
+    move.w d3,gfx_tmpras_h
+    ; size = RASSIZE(w,h) = (((w+15)>>4)*2)*h
+    move.l d2,d0
+    add.l #15,d0
+    lsr.l #4,d0
+    add.l d0,d0
+    move.l d3,d1
+    mulu d1,d0                          ; demo sizes fit 16-bit product
+    lea gfx_tmpras,a0
+    move.l gfx_tmpras_buf,a1
+    move.l gfx_gfx_base,a6
+    jsr _LVOInitTmpRas(a6)
+    move.l gfx_rp,a0
+    lea gfx_tmpras,a1
+    move.l a1,RP_TMPRAS(a0)
+    moveq #1,d0
+    bra .stm_done
+.stm_fail:
+    moveq #0,d0
+.stm_done:
+    movem.l (sp)+,d1-d3/a0-a1/a6
+    rts
+
+gfx_free_tmpras:
+    movem.l d0-d1/a0-a1/a6,-(sp)
+    move.l gfx_rp,d0
+    beq .ftm_buf
+    move.l d0,a0
+    clr.l RP_TMPRAS(a0)
+.ftm_buf:
+    move.l gfx_tmpras_buf,d0
+    beq .ftm_done
+    move.l gfx_gfx_base,d1
+    beq .ftm_clr
+    move.l d1,a6
+    move.l d0,a0
+    moveq #0,d0
+    move.w gfx_tmpras_w,d0
+    moveq #0,d1
+    move.w gfx_tmpras_h,d1
+    jsr _LVOFreeRaster(a6)
+.ftm_clr:
+    clr.l gfx_tmpras_buf
+    clr.w gfx_tmpras_w
+    clr.w gfx_tmpras_h
+.ftm_done:
+    movem.l (sp)+,d0-d1/a0-a1/a6
     rts
 
 GfxCloseScreen:
     link a6,#0
-    movem.l d0-d7/a0-a5,-(sp)
+    movem.l d0-d7/a0-a6,-(sp)
     bsr gfx_do_close_screen
-    movem.l (sp)+,d0-d7/a0-a5
+    movem.l (sp)+,d0-d7/a0-a6
     unlk a6
     rts
 
@@ -240,6 +335,8 @@ gfx_do_close_screen:
     movem.l d0-d7/a0-a6,-(sp)
     bsr gfx_free_all_sprites
     bsr gfx_free_all_bitmaps
+    ; Detach TmpRas while Window->RPort is still valid
+    bsr gfx_free_tmpras
     bsr gfx_close_window_safely
     move.l gfx_screen,d0
     beq .dcs_done
@@ -505,18 +602,24 @@ GfxCircle:
 
 GfxFill:
     link a6,#0
-    movem.l d0-d2/a1/a5-a6,-(sp)
+    movem.l d0-d2/a0-a1/a5-a6,-(sp)
     move.l a6,a5
-    tst.l gfx_rp
+    move.l gfx_rp,d0
+    beq .fill_done
+    move.l d0,a0
+    ; Flood crashes if RastPort.TmpRas is NULL (amiga_gfx_demo GfxFill path)
+    tst.l RP_TMPRAS(a0)
+    beq .fill_done
+    tst.l gfx_tmpras_buf
     beq .fill_done
     move.l gfx_gfx_base,a6
     move.l gfx_rp,a1
-    moveq #0,d2
+    moveq #1,d2                         ; mode 1: fill matching seed pen
     move.l 8(a5),d0
     move.l 12(a5),d1
     jsr _LVOFlood(a6)
 .fill_done:
-    movem.l (sp)+,d0-d2/a1/a5-a6
+    movem.l (sp)+,d0-d2/a0-a1/a5-a6
     unlk a6
     rts
 
@@ -676,7 +779,7 @@ gfx_handle_to_slot:
 
 GfxAllocBitMap:
     link a6,#0
-    movem.l d1-d7/a0-a5,-(sp)
+    movem.l d1-d7/a0-a6,-(sp)
     move.l a6,a5
     tst.l gfx_gfx_base
     beq .gab_fail
@@ -788,7 +891,7 @@ GfxAllocBitMap:
 .gab_fail:
     moveq #0,d0
 .gab_done:
-    movem.l (sp)+,d1-d7/a0-a5
+    movem.l (sp)+,d1-d7/a0-a6
     unlk a6
     rts
 

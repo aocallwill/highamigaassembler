@@ -49,6 +49,10 @@ NS_SIZEOF           EQU 32
 SC_VIEWPORT         EQU 44
 SC_RASTPORT         EQU 84
 
+; RastPort.TmpRas (graphics/rastport.i) — required by Flood()
+RP_TMPRAS           EQU 12
+TR_SIZEOF           EQU 8
+
 ; NewWindow (shared with gui_intuition.i values)
 NW_LEFTEDGE         EQU 0
 NW_TOPEDGE          EQU 2
@@ -70,6 +74,7 @@ NW_MAXHEIGHT        EQU 44
 NW_TYPE             EQU 46
 NW_SIZEOF           EQU 48
 
+WD_RPORT            EQU 50
 WD_USERPORT         EQU 86
 MP_SIGBIT           EQU 15
 IM_CLASS            EQU 20

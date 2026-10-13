@@ -68,7 +68,7 @@ extern func GfxPlot(x: int, y: int) -> void;
 extern func GfxLine(x0: int, y0: int, x1: int, y1: int) -> void;
 extern func GfxRect(x: int, y: int, w: int, h: int, filled: int) -> void;
 extern func GfxCircle(cx: int, cy: int, r: int, filled: int) -> void;
-extern func GfxFill(x: int, y: int) -> void;
+extern func GfxFill(x: int, y: int) -> void;  // Flood mode 1; needs TmpRas (set by GfxOpenScreen)
 extern func GfxText(x: int, y: int, text: int) -> void;
 
 extern func GfxAllocBitMap(w: int, h: int, depth: int) -> int;
