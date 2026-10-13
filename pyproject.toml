@@ -48,6 +48,7 @@ has-sprite-importer = "hasc.tool_runner:sprite_importer"
 has-sprite-strip-importer = "hasc.tool_runner:sprite_strip_importer"
 has-texturepacker-atlas-importer = "hasc.tool_runner:texturepacker_atlas_importer"
 has-tile-importer = "hasc.tool_runner:tile_importer"
+has-tiled-map-importer = "hasc.tool_runner:tiled_map_importer"
 has-gui-creator = "guicreator.__main__:main"
 
 [project.urls]

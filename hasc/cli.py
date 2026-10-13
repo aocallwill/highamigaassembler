@@ -7,6 +7,13 @@ import os
 from . import __version__, parser, codegen, validator
 from . import ast
 from . import reachability
+from .amiga_toolchain import (
+    ToolchainError,
+    build_exe_from_asm,
+    collect_extern_names,
+    create_bootable_adf,
+    default_exe_path_for_adf,
+)
 from .target import CpuTarget, TargetSpec
 from lark.exceptions import LarkError, UnexpectedInput, UnexpectedToken, UnexpectedCharacters
 
@@ -146,8 +153,34 @@ def main(argv=None):
         default=True,
         help="Include HAS Build Statistics comment block in output assembly (default: enabled)",
     )
+    ap.add_argument(
+        "--asset-outdir",
+        default=None,
+        help="Directory for #import-generated .s files (default: build/gen)",
+    )
+    ap.add_argument(
+        "--force-assets",
+        action="store_true",
+        help="Regenerate #import assets even when the cache is fresh",
+    )
+    ap.add_argument(
+        "--exe",
+        metavar="PATH",
+        default=None,
+        help="After compile, assemble+link an Amiga hunk executable to PATH (vasm -Fhunk, vlink -bamigahunk)",
+    )
+    ap.add_argument(
+        "--adf",
+        metavar="PATH",
+        default=None,
+        help="After compile, build a bootable ADF at PATH (implies --exe; default exe is PATH with .exe)",
+    )
     args = ap.parse_args(argv)
     target = TargetSpec.for_cpu(args.cpu)
+
+    # --adf implies building an executable; use sibling .exe when --exe omitted.
+    if args.adf and not args.exe:
+        args.exe = str(default_exe_path_for_adf(args.adf))
 
     # If --generate specified, run Python script to generate HAS code
     if args.generate:
@@ -191,7 +224,12 @@ def main(argv=None):
         base_dir = None
         if not args.generate:
             base_dir = os.path.dirname(os.path.abspath(args.input))
-        mod = parser.parse(src, base_dir=base_dir)
+        mod = parser.parse(
+            src,
+            base_dir=base_dir,
+            asset_outdir=args.asset_outdir,
+            force_assets=args.force_assets,
+        )
     except SyntaxError as e:
         print(f"Error in {args.input}:", file=sys.stderr)
         print(f"  {e}", file=sys.stderr)
@@ -243,6 +281,7 @@ def main(argv=None):
         source_lines=src.splitlines(),
         annotate=args.annotate,
     )
+    cg.output_path = args.output
     try:
         asm = cg.gen()
     except codegen.CodeGenError as e:
@@ -259,6 +298,23 @@ def main(argv=None):
         f.write(asm_output)
 
     print(f"Wrote assembly to {args.output}")
+
+    if args.exe or args.adf:
+        try:
+            externs = collect_extern_names(mod)
+            build_exe_from_asm(
+                args.output,
+                args.exe,
+                cpu=target,
+                extern_symbols=externs,
+            )
+            print(f"Wrote executable to {args.exe}")
+            if args.adf:
+                create_bootable_adf(args.adf, args.exe)
+                print(f"Wrote ADF to {args.adf}")
+        except ToolchainError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

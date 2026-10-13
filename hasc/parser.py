@@ -1301,9 +1301,18 @@ setattr(ASTBuilder, 'or', ASTBuilder.or_)
 setattr(ASTBuilder, 'not', ASTBuilder.not_)
 
 
-def parse(text: str, base_dir: str = None) -> ast.Module:
+def parse(
+    text: str,
+    base_dir: str = None,
+    asset_outdir: str = None,
+    force_assets: bool = False,
+) -> ast.Module:
     import re
     import os
+    from . import asset_import as asset_import_mod
+
+    if asset_outdir is None:
+        asset_outdir = asset_import_mod.DEFAULT_ASSET_OUTDIR
 
     def _blank_for_line(line: str) -> str:
         if line.endswith("\r\n"):
@@ -1437,12 +1446,15 @@ def parse(text: str, base_dir: str = None) -> ast.Module:
         current_dir: str,
         const_values: dict,
         include_stack: list,
-    ) -> str:
+    ):
+        """Return (preprocessed_text, list[ast.AssetImport])."""
         const_re = re.compile(r"^\s*const\s+([A-Za-z_]\w*)\s*=\s*(.+?)\s*;?\s*$")
         ident_re = re.compile(r"^[A-Za-z_]\w*$")
         include_re = re.compile(r'^\s*#include\s+"([^\"]+)"\s*;?\s*$')
+        import_re = re.compile(r'^\s*#import\b')
         lines = text_in.splitlines(keepends=True)
         output = []
+        imports = []
         cond_stack = []
         active = True
 
@@ -1597,14 +1609,50 @@ def parse(text: str, base_dir: str = None) -> ast.Module:
                 except IOError as e:
                     raise SyntaxError(f"#include: failed to read {inc_path}: {e}")
 
-                output.append(
-                    _preprocess_source(
-                        inc_text,
-                        os.path.dirname(inc_path),
-                        const_values,
-                        include_stack + [inc_path],
+                inc_text_out, inc_imports = _preprocess_source(
+                    inc_text,
+                    os.path.dirname(inc_path),
+                    const_values,
+                    include_stack + [inc_path],
+                )
+                output.append(inc_text_out)
+                imports.extend(inc_imports)
+                continue
+
+            if import_re.match(stripped):
+                if not active:
+                    output.append(_blank_for_line(raw_line))
+                    continue
+                try:
+                    kind, path_raw, label, options = asset_import_mod.parse_import_line(
+                        stripped, line_no
+                    )
+                    asset = asset_import_mod.process_import(
+                        kind,
+                        path_raw,
+                        label,
+                        options,
+                        current_dir=current_dir,
+                        asset_outdir=asset_outdir,
+                        force=force_assets,
+                        line_no=line_no,
+                    )
+                except RuntimeError as e:
+                    raise SyntaxError(
+                        f"Preprocessor error at line {line_no}: {e}"
+                    ) from e
+                imports.append(
+                    ast.AssetImport(
+                        kind=asset.kind,
+                        source_path=asset.source_path,
+                        label=asset.label,
+                        options=dict(asset.options),
+                        gen_path=asset.gen_path,
+                        labels=list(asset.labels) if asset.labels else [],
                     )
                 )
+                # Keep line numbers stable: blank the directive line.
+                output.append(_blank_for_line(raw_line))
                 continue
 
             if active:
@@ -1629,12 +1677,12 @@ def parse(text: str, base_dir: str = None) -> ast.Module:
                 f"'#{frame['kind']} {frame['name']}' opened at line {frame['line_opened']} (missing '#endif')"
             )
 
-        return ''.join(output)
+        return ''.join(output), imports
 
-    # Preprocess #ifdef/#ifndef/#if/#else/#endif and #include together so
+    # Preprocess #ifdef/#ifndef/#if/#else/#endif, #include, and #import together so
     # directives inside inactive branches are not expanded.
     root_dir = base_dir if base_dir else os.getcwd()
-    text = _preprocess_source(text, root_dir, {}, [])
+    text, asset_imports = _preprocess_source(text, root_dir, {}, [])
     # Targeted preprocessing:
     # Extract `asm { ... }` blocks (preserving their content including newlines)
     # and replace them with a placeholder token that Lark can lex as ASM_BLOCK.
@@ -1840,6 +1888,7 @@ def parse(text: str, base_dir: str = None) -> ast.Module:
             raise SyntaxError(f"Constant expression error{const_prefix}: {original}") from original
         raise
     module.node_lines = builder.node_lines
+    module.asset_imports = list(asset_imports)
     
     # Step 3: Restore extracted blocks
     # Helper to restore placeholders in various node types

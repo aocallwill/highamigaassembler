@@ -171,6 +171,7 @@ def export_tileset_asm(
     match_bob_palette_from_asm: Optional[str] = None,
     match_bob_palette_label: Optional[str] = None,
     strict_palette_match: bool = False,
+    omit_palette: bool = False,
 ) -> str:
     """
     Export PNG tile strip or grid to tile-by-tile row-interleaved format.
@@ -300,15 +301,31 @@ def export_tileset_asm(
                         # Store as word (Motorola big-endian: high byte first)
                         lines.append(f"\tDC.W\t${word_val:04X}\t; tile={tile_idx} y={row} plane={plane_idx}")
     
-    # Add palette data
-    palette_label = f"{out_label}_palette"
-    lines.append(f"\n{palette_label}:")
-    for i in range(0, min(max_colors, len(final_palette) // 3)):
-        r = int(round(final_palette[i * 3] / 17.0))
-        g = int(round(final_palette[i * 3 + 1] / 17.0))
-        b = int(round(final_palette[i * 3 + 2] / 17.0))
-        amiga_color = (r << 8) | (g << 4) | b
-        lines.append(f"\tDC.W\t${amiga_color:03X}\t; color {i}")
+    # Palette: omit when remapped onto an external BOB/atlas palette (LoadPalette
+    # should use that shared block). Otherwise emit a private palette copy.
+    if not omit_palette:
+        palette_label = f"{out_label}_palette"
+        lines.append(f"\n{palette_label}:")
+        if match_bob_palette_from_asm:
+            dst_words = _parse_first_palette_from_asm(
+                match_bob_palette_from_asm,
+                palette_label=match_bob_palette_label,
+            )
+            for i, word in enumerate(dst_words[:max_colors]):
+                lines.append(f"\tDC.W\t${int(word) & 0xFFF:03X}\t; color {i} (matched)")
+        else:
+            for i in range(0, min(max_colors, len(final_palette) // 3)):
+                r = int(round(final_palette[i * 3] / 17.0))
+                g = int(round(final_palette[i * 3 + 1] / 17.0))
+                b = int(round(final_palette[i * 3 + 2] / 17.0))
+                amiga_color = (r << 8) | (g << 4) | b
+                lines.append(f"\tDC.W\t${amiga_color:03X}\t; color {i}")
+    elif match_bob_palette_from_asm:
+        lines.append("")
+        lines.append(
+            f"; Palette omitted — indices remapped to "
+            f"{match_bob_palette_label or Path(match_bob_palette_from_asm).stem}"
+        )
     
     return '\n'.join(lines)
 

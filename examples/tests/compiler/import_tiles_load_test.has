@@ -1,0 +1,33 @@
+// Compile/load regression: #import tileset + #import tilemap (separate).
+// Palette authority: #import palette first; tileset remaps via match_palette.
+// Tilemap is a DATA index grid (not chip); tileset planar data is DATA_C.
+
+#import palette "assets/mini_tiles.png" as level_pal colors=16 dither=none;
+#import tileset "assets/mini_tiles.png" as level_tiles tile_w=16 tile_h=16 planes=4 match_palette=level_pal;
+#import tilemap "assets/mini_map.tmx" as level_map layer=Ground tileset=level_tiles;
+
+code main:
+    extern func LoadPalette(palette_ptr: int, num_colors: int) -> int;
+
+    asm {
+        jsr main
+        rts
+    }
+
+    proc main() -> int {
+        var rc: int;
+        var tiles_ptr: int = &level_tiles;
+        var map_ptr: int = &level_map;
+
+        rc = LoadPalette(&level_pal, 16);
+        if (rc == -1) {
+            return -1;
+        }
+        if (tiles_ptr == 0) {
+            return -10;
+        }
+        if (map_ptr == 0) {
+            return -20;
+        }
+        return 0;
+    }

@@ -1,0 +1,37 @@
+// Compile/load regression: #import bob + #import sprite in one module.
+// Expectation (with bob+sprite libs linked at runtime):
+// - Both CreateBob and CreateSprite succeed
+// - Cleanup via DestroyBob
+// Compile-only: hasc must INCLUDE both generated .s files and resolve both labels.
+
+#import bob "assets/import_bob_player.png" as import_combo_bob planes=2 add_word;
+#import sprite "assets/import_sprite_bullet.png" as import_combo_sprite;
+
+code main:
+    extern func CreateBob(descriptor_ptr: int, save_background: int) -> int;
+    extern func DestroyBob(handle: int) -> void;
+    extern func CreateSprite(index: int, source_data: int) -> int;
+
+    asm {
+        jsr main
+        rts
+    }
+
+    proc main() -> int {
+        var bob: int;
+        var spr: int;
+
+        bob = CreateBob(&import_combo_bob, 0);
+        if (bob == -1) {
+            return -10;
+        }
+
+        spr = CreateSprite(0, &import_combo_sprite);
+        if (spr == -1) {
+            call DestroyBob(bob);
+            return -20;
+        }
+
+        call DestroyBob(bob);
+        return 0;
+    }

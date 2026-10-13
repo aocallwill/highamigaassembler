@@ -10,7 +10,7 @@
 
 ### Project Identity
 - **Name**: HAS (High Assembler)
-- **Version**: 0.9.8 (active development, not production-ready)
+- **Version**: 0.9.9 (active development, not production-ready)
 - **Language**: Python 3.8+
 - **Target**: Motorola 68000 assembly (Amiga), with an opt-in 68020 CPU target (see below)
 - **Output**: Standard assembly compatible with `vasm` + `vlink`

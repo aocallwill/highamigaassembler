@@ -1,0 +1,32 @@
+// Compile/load regression: #import sprite → CreateSprite(slot, &label).
+// Hardware sprite PNG must be exactly 16px wide (2 planes / 4 colours).
+// Expectation (with sprite lib linked at runtime):
+// - CreateSprite returns success (not -1)
+// Compile-only: hasc must emit INCLUDE for the generated sprite .s and lea of import_sprite_bullet.
+
+#import sprite "assets/import_sprite_bullet.png" as import_sprite_bullet;
+
+code main:
+    extern func CreateSprite(index: int, source_data: int) -> int;
+
+    asm {
+        jsr main
+        rts
+    }
+
+    proc main() -> int {
+        var spr: int;
+        var data: int;
+
+        data = &import_sprite_bullet;
+        if (data == 0) {
+            return -1;
+        }
+
+        spr = CreateSprite(0, data);
+        if (spr == -1) {
+            return -10;
+        }
+
+        return 0;
+    }

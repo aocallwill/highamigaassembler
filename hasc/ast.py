@@ -61,11 +61,25 @@ def size_suffix(size_bytes: int) -> str:
 
 
 @dataclass
+class AssetImport:
+    """Compile-time #import bob|palette|sprite|atlas|tileset|tilemap record (preprocessor)."""
+    kind: str          # 'bob' | 'palette' | 'sprite' | 'atlas' | 'tileset' | 'tilemap'
+    source_path: str   # absolute source path (PNG or TexturePacker XML)
+    label: str         # primary / prefix symbol
+    options: dict = field(default_factory=dict)
+    gen_path: str = ""  # absolute path to generated .s (master include for atlas)
+    # Extra addressable symbols (atlas frames + palette). Empty → use [label] only.
+    labels: List[str] = field(default_factory=list)
+
+
+@dataclass
 class Module:
     items: List[Any] = field(default_factory=list)
     # Side-channel: id(stmt_node) -> source line number, populated by the parser
     # (best-effort; not all statement kinds are covered). See --annotate in cli.py.
     node_lines: dict = field(default_factory=dict)
+    # Side-channel: #import results (not AST items; codegen INCLUDEs them).
+    asset_imports: List[AssetImport] = field(default_factory=list)
 
 
 @dataclass

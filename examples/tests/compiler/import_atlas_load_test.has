@@ -1,0 +1,43 @@
+// Compile/load regression: #import atlas (TexturePacker XML) → shared-palette BOBs.
+// Expectation (with bob/graphics linked at runtime):
+// - LoadPalette(&walk_palette, …) and CreateBob(&walk_frame_0 / _1) succeed
+// Compile-only: hasc emits one INCLUDE of the master atlas .s and registers
+// walk_palette + walk_frame_0 + walk_frame_1.
+
+#import atlas "assets/mini_atlas.xml" as walk planes=2 add_word shared_palette;
+
+code main:
+    extern func LoadPalette(palette_ptr: int, num_colors: int) -> int;
+    extern func CreateBob(descriptor_ptr: int, save_background: int) -> int;
+    extern func DestroyBob(handle: int) -> void;
+
+    asm {
+        jsr main
+        rts
+    }
+
+    proc main() -> int {
+        var bob0: int;
+        var bob1: int;
+        var rc: int;
+
+        rc = LoadPalette(&walk_palette, 4);
+        if (rc == -1) {
+            return -1;
+        }
+
+        bob0 = CreateBob(&walk_frame_0, 0);
+        if (bob0 == -1) {
+            return -10;
+        }
+
+        bob1 = CreateBob(&walk_frame_1, 0);
+        if (bob1 == -1) {
+            call DestroyBob(bob0);
+            return -20;
+        }
+
+        call DestroyBob(bob1);
+        call DestroyBob(bob0);
+        return 0;
+    }

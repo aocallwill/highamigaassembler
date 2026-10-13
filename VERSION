@@ -1,12 +1,13 @@
 HAS - High Assembler for Motorola 68000 (Amiga)
-Version 0.9.8
+Version 0.9.9
 
 Status: Active Development
 
-Release Date: September 8, 2026
+Release Date: October 13, 2026
 
 Major Features in This Version:
 - Complete 68000 assembly code generation
+- Opt-in 68020 CPU target
 - Macro system (Phase 2)
 - @python directive support (Phase 4)
 - Include system with cyclic dependency detection
@@ -26,7 +27,9 @@ Major Features in This Version:
 - Struct declarations
 - Struct pointers with arrow operator (p->field)
 - Native keyword for zero-overhead assembly functions
-- Tile graphics importer tool
+- `#import` assets: bob / palette / sprite / atlas / tileset / tilemap
+- One-shot `hasc --exe` / `--adf` (vasm + vlink; ADF needs amitools)
+- Tile graphics importer and Tiled map importer tools
 - GUI Creator foundation for Amiga GUI form design
 
 Known Limitations:

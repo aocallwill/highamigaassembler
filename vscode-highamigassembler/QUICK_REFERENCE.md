@@ -4,7 +4,7 @@
 
 ```bash
 # Option 1: Install from VSIX
-code --install-extension vscode-highamigassembler-0.1.0.vsix
+code --install-extension vscode-highamigassembler-0.1.1.vsix
 
 # Option 2: Development mode
 code vscode-highamigassembler
@@ -72,12 +72,28 @@ calculate();  // ← Hover mouse here
 | Definition not found | Check name matches exactly (case-sensitive) |
 | Only finds same file | Ensure `.has` files are in workspace |
 
+## Syntax Color Legend (HAS theme)
+
+| Kind | Examples | Role |
+|------|----------|------|
+| Language commands | `if` `call` `return` `loop` | HAS control flow |
+| Declarations | `proc` `func` `interrupt` `native` | Procedure forms |
+| Sections | `code` `data` `bss` `*_chip` | Memory sections |
+| Directives | `#include` `#warning` `#pragma` | Preprocessor |
+| `#import` | `#import` + `bob`/`sprite`/`tileset`… | Asset import |
+| m68k instructions | `move` `jsr` `rts` | Inside `asm { }` only |
+| Pseudo-ops | `dc` `ds` `xdef` `section` | Inside `asm { }` only |
+
+Select theme **High Amiga Assembler Colors** for the full palette.
+
 ## Files You Need to Know About
 
 ```
 vscode-highamigassembler/
 ├── extension.js          ← Main code (register providers)
 ├── package.json          ← Config (commands, keybindings)
+├── syntaxes/             ← TextMate grammar
+├── themes/               ← Color theme
 ├── README.md             ← Overview
 ├── SETUP_GUIDE.md        ← Installation steps
 └── FEATURES.md           ← Feature behavior and limitations
@@ -123,7 +139,7 @@ cd vscode-highamigassembler
 vsce package
 
 # Install it
-code --install-extension vscode-highamigassembler-0.1.0.vsix
+code --install-extension vscode-highamigassembler-0.1.1.vsix
 ```
 
 ## What It Finds
@@ -286,7 +302,7 @@ Test a file:
 
 ## Version Info
 
-- **Extension:** v0.1.0
+- **Extension:** v0.1.1
 - **Requires:** VS Code 1.85+
 - **License:** MIT
 
