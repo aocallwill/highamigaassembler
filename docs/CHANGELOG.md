@@ -4,6 +4,19 @@ All notable changes to the HAS (High Assembler) project will be documented in th
 
 ## [Unreleased]
 
+### Added
+
+- **Live-induction `for` + `dbra`:** constant-bound `for i = start to end [by step]`
+  loops that **read** `i` (but do not assign to it, take `&i`, call out, or name `i`
+  in asm) now emit `dbra` on `d7` with the induction value kept in a high Dn,
+  instead of the general compare/add/`bra` path. Unused-induction `for` and
+  `repeat` behavior is unchanged.
+- **`countdown N until (cond) { ... }`:** DBcc loop that runs the body at most `N`
+  times and exits early when `cond` is true after a body iteration (`dbeq` /
+  `dbne` / `dblt` / …). `cond` must be a relational/equality comparison.
+  Shares `d7` nesting/`repeat` zero-wrap semantics. Example:
+  [examples/countdown_until_test.has](../examples/countdown_until_test.has).
+
 ## [0.9.9] - 2026-10-13
 
 ### Added

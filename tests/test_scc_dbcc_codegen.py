@@ -284,7 +284,8 @@ code test:
         assert "dbra" in asm
         assert "cmp" not in asm  # No per-iteration bound comparison remains
 
-    def test_used_var_falls_back(self):
+    def test_used_var_uses_dbra_with_induction(self):
+        """Live reads of i keep dbra: d7 counts, induction Dn holds i."""
         src = """
 code test:
     proc for_used(dummy: int) -> int {
@@ -297,12 +298,13 @@ code test:
     }
 """
         asm = proc_body(compile_src(src), "for_used")
-        assert "dbra" not in asm
-        assert "cmp" in asm  # General bound-check path retained
+        assert count_instruction(asm, "dbra") == 1
+        assert "write back induction" in asm
+        # No per-iteration bound compare against end (general path uses cmp + bgt/blt)
+        assert not re.search(r"\b(bgt|blt)\s+endfor\d+\b", asm)
 
-    def test_var_used_only_via_eq_comparison_falls_back(self):
-        """Regression test: loops that read the counter via `==` must never
-        use the dbra fast path, regardless of parser/normalization internals."""
+    def test_var_used_only_via_eq_comparison_uses_dbra(self):
+        """Reads of i via `==` are induction-safe and take the live-dbra path."""
         src = """
 code test:
     proc for_used_via_eq(dummy: int) -> int {
@@ -318,9 +320,9 @@ code test:
     }
 """
         asm = proc_body(compile_src(src), "for_used_via_eq")
-        assert "dbra" not in asm
+        assert count_instruction(asm, "dbra") == 1
 
-    def test_var_used_only_via_ne_comparison_falls_back(self):
+    def test_var_used_only_via_ne_comparison_uses_dbra(self):
         src = """
 code test:
     proc for_used_via_ne(dummy: int) -> int {
@@ -335,9 +337,9 @@ code test:
     }
 """
         asm = proc_body(compile_src(src), "for_used_via_ne")
-        assert "dbra" not in asm
+        assert count_instruction(asm, "dbra") == 1
 
-    def test_var_used_only_via_lt_comparison_falls_back(self):
+    def test_var_used_only_via_lt_comparison_uses_dbra(self):
         src = """
 code test:
     proc for_used_via_lt(dummy: int) -> int {
@@ -352,7 +354,7 @@ code test:
     }
 """
         asm = proc_body(compile_src(src), "for_used_via_lt")
-        assert "dbra" not in asm
+        assert count_instruction(asm, "dbra") == 1
 
     def test_var_used_only_in_asm_block_falls_back(self):
         src = """
@@ -370,6 +372,57 @@ code test:
 """
         asm = proc_body(compile_src(src), "for_asm_ref")
         assert "dbra" not in asm
+
+    def test_assign_to_induction_falls_back(self):
+        src = """
+code test:
+    proc for_assign_i(dummy: int) -> int {
+        var i: int = 0;
+        for i = 0 to 9 {
+            i = i + 1;
+        }
+        return i;
+    }
+"""
+        asm = proc_body(compile_src(src), "for_assign_i")
+        assert "dbra" not in asm
+        assert re.search(r"\bbgt\s+endfor\d+\b", asm)
+
+    def test_live_descending_step_uses_dbra(self):
+        src = """
+code test:
+    proc for_live_desc(dummy: int) -> int {
+        var sum: int = 0;
+        var i: int = 0;
+        for i = 10 to 0 by -2 {
+            sum = sum + i;
+        }
+        return sum;
+    }
+"""
+        asm = proc_body(compile_src(src), "for_live_desc")
+        assert count_instruction(asm, "dbra") == 1
+        assert re.search(r"(moveq\s+#5,d7|move\.l\s+#5,d7)", asm)
+        assert "subq" in asm  # step -2 on induction reg
+
+    def test_live_continue_targets_step_then_dbra(self):
+        src = """
+code test:
+    proc for_live_cont(dummy: int) -> int {
+        var sum: int = 0;
+        var i: int = 0;
+        for i = 0 to 9 {
+            if (i == 3) {
+                continue;
+            }
+            sum = sum + i;
+        }
+        return sum;
+    }
+"""
+        asm = proc_body(compile_src(src), "for_live_cont")
+        assert count_instruction(asm, "dbra") == 1
+        assert re.search(r"\bbra\s+forcont\d+\b", asm)
 
     def test_custom_step_and_nonzero_start(self):
         """for i = 10 to 0 by -2 (unused): 6 iterations (10,8,6,4,2,0) -> counter=5."""
@@ -829,14 +882,17 @@ class TestForBodyBlocksDbraUnit:
             body=[ast.Assign(target="sum", expr=ast.Number(1), is_deref=False)],
         )
         assert cg._for_loop_dbra_count(stmt) == 10
+        assert cg._for_loop_iteration_count(stmt) == 10
 
     def test_for_loop_dbra_count_none_when_used(self):
+        """Unused-var path still refuses bodies that reference i; iteration count remains available."""
         cg = _empty_codegen()
         stmt = ast.ForLoop(
             var="i", start=ast.Number(0), end=ast.Number(9), step=ast.Number(1),
             body=[ast.ExprStmt(expr=ast.VarRef(name="i"))],
         )
         assert cg._for_loop_dbra_count(stmt) is None
+        assert cg._for_loop_iteration_count(stmt) == 10
 
     def test_for_loop_dbra_count_descending(self):
         cg = _empty_codegen()
@@ -845,6 +901,154 @@ class TestForBodyBlocksDbraUnit:
             body=[],
         )
         assert cg._for_loop_dbra_count(stmt) == 6
+        assert cg._for_loop_iteration_count(stmt) == 6
+
+
+# ---------------------------------------------------------------------------
+# countdown N until (cond) -> DBcc
+# ---------------------------------------------------------------------------
+
+class TestCountdownUntil:
+    def test_eq_uses_dbeq(self):
+        src = """
+code test:
+    proc cd_eq(dummy: int) -> int {
+        var val: int = 1;
+        countdown 16 until (val == 0) {
+            val = val - 1;
+        }
+        return val;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_eq")
+        assert count_instruction(asm, "dbeq") == 1
+        assert count_instruction(asm, "dbra") == 0
+        assert "subq.l #1,d0" in asm  # N-1 prep like repeat
+
+    def test_ne_uses_dbne(self):
+        src = """
+code test:
+    proc cd_ne(dummy: int) -> int {
+        var val: int = 0;
+        countdown 8 until (val != 0) {
+            val = 1;
+        }
+        return val;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_ne")
+        assert count_instruction(asm, "dbne") == 1
+
+    def test_lt_uses_dblt(self):
+        src = """
+code test:
+    proc cd_lt(dummy: int) -> int {
+        var val: int = 5;
+        countdown 10 until (val < 0) {
+            val = val - 1;
+        }
+        return val;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_lt")
+        assert count_instruction(asm, "dblt") == 1
+
+    def test_gt_uses_dbgt(self):
+        src = """
+code test:
+    proc cd_gt(dummy: int) -> int {
+        var val: int = 0;
+        countdown 10 until (val > 3) {
+            val = val + 1;
+        }
+        return val;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_gt")
+        assert count_instruction(asm, "dbgt") == 1
+
+    def test_const_left_swaps_to_dbgt(self):
+        """until (3 < val) swaps to cmp #3,val then dbgt."""
+        src = """
+code test:
+    proc cd_const_left(dummy: int) -> int {
+        var val: int = 0;
+        countdown 10 until (3 < val) {
+            val = val + 1;
+        }
+        return val;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_const_left")
+        assert count_instruction(asm, "dbgt") == 1
+        assert re.search(r"cmp\.l\s+#3,d0", asm)
+
+    def test_nested_in_repeat_saves_d7(self):
+        src = """
+code test:
+    proc cd_nested(dummy: int) -> int {
+        var val: int = 1;
+        var sum: int = 0;
+        repeat 3 {
+            countdown 4 until (val == 0) {
+                val = 0;
+            }
+            sum = sum + 1;
+            val = 1;
+        }
+        return sum;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_nested")
+        assert "save outer loop counter" in asm
+        assert "restore outer loop counter" in asm
+        assert count_instruction(asm, "dbeq") == 1
+        assert count_instruction(asm, "dbra") == 1
+
+    def test_break_and_continue(self):
+        src = """
+code test:
+    proc cd_bc(dummy: int) -> int {
+        var val: int = 1;
+        var n: int = 0;
+        countdown 20 until (val == 0) {
+            n = n + 1;
+            if (n == 2) {
+                continue;
+            }
+            if (n == 5) {
+                break;
+            }
+            val = 1;
+        }
+        return n;
+    }
+"""
+        asm = proc_body(compile_src(src), "cd_bc")
+        # Optimized cmp+branch may land directly on cont/end labels (beq, not bra)
+        assert re.search(r"\b(bra|beq)\s+countdowncont\d+\b", asm)
+        assert re.search(r"\b(bra|beq)\s+endcountdown\d+\b", asm)
+        assert count_instruction(asm, "dbeq") == 1
+
+    def test_non_comparison_until_rejected_by_validator(self):
+        from hasc import validator as has_validator
+        src = """
+code test:
+    proc bad(dummy: int) -> int {
+        var val: int = 1;
+        countdown 4 until (val) {
+            val = 0;
+        }
+        return val;
+    }
+"""
+        mod = has_parser.parse(src)
+        v = has_validator.Validator(mod)
+        try:
+            v.validate()
+            assert False, "expected ValidationError"
+        except has_validator.ValidationError as e:
+            assert "countdown until" in str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -859,6 +1063,7 @@ if __name__ == "__main__":
         TestDbraForLoop,
         TestDbraNesting,
         TestForBodyBlocksDbraUnit,
+        TestCountdownUntil,
     ]
 
     passed = 0

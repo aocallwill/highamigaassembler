@@ -37,7 +37,7 @@ If a feature cannot preserve predictable assembly behavior, it belongs in toolin
 - **Native Functions**: Zero-overhead assembly functions with `native` keyword
 - **Data Types**: 8/16/32-bit integers, pointers, arrays, structs
 - **Struct Pointers**: Arrow operator (`p->field`) for efficient member access
-- **Control Flow**: if/else, for, while, do-while, loop (endless, `break`-only exit), break, continue
+- **Control Flow**: if/else, for, while, do-while, repeat, countdown…until (DBcc), loop (endless, `break`-only exit), break, continue
 - **Operators**: Arithmetic, bitwise, logical, shift, comparison
 - **Q16.16 Fixed-Point**: Automatic conversion of floating-point literals (e.g., `2.5`, `0.98`) to Q16.16 format
 - **Memory Sections**: code, data, bss with automatic alignment
@@ -211,6 +211,7 @@ The `examples/` directory contains numerous demonstrations:
 ### Control Flow
 
 - `loops_test.has` - for, while, do-while loops
+- `countdown_until_test.has` - countdown…until DBcc early-exit loops
 - `break_continue_test.has` - Loop control statements
 - `comprehensive_operators.has` - All operator types
 
@@ -358,7 +359,7 @@ interleaves comment-only lines into the generated assembly:
 - `; L{n}: <original HAS source line text>` before most statements
   (best-effort - not every statement kind is guaranteed to have a source
   line recorded; if unavailable it is silently skipped).
-- `; end for` / `; end while` / `; end repeat` / `; end loop` markers right after the
+- `; end for` / `; end while` / `; end repeat` / `; end countdown` / `; end loop` markers right after the
   corresponding loop's end label.
 
 These are pure comments and never affect generated instructions or labels.

@@ -52,7 +52,7 @@ class CodeGen:
         self.current_stmt_line = None  # source line of the statement being emitted, for diagnostics
         self.push_stack = []  # Track PUSH/POP register lists
         self.loop_stack = []  # Stack of (continue_label, end_label) for nested loops
-        self.dbra_depth = 0  # Nesting depth of active dbra-counter loops (RepeatLoop / fast-path ForLoop); they share d7
+        self.dbra_depth = 0  # Nesting depth of active dbra/DBcc counters (Repeat/Countdown/for fast path); share d7
         # Optional live local -> Dn map for for-loop induction register promotion (Phase 2c).
         self.induction_regs = {}
 
@@ -791,6 +791,9 @@ class CodeGen:
                     # Recursively collect locals in loop body
                     collect_locals(stmt.body)
                 elif isinstance(stmt, ast.RepeatLoop):
+                    # Recursively collect locals in loop body
+                    collect_locals(stmt.body)
+                elif isinstance(stmt, ast.CountdownLoop):
                     # Recursively collect locals in loop body
                     collect_locals(stmt.body)
                 elif isinstance(stmt, ast.Loop):
@@ -2815,7 +2818,7 @@ class CodeGen:
         return False
 
     def _dbra_loop_enter(self, indent):
-        """Reserve d7 for a dbra loop counter (RepeatLoop or the ForLoop fast path below).
+        """Reserve d7 for a dbra loop counter (RepeatLoop / CountdownLoop / ForLoop fast path).
         CodeGen owns d7 for this purpose: all active dbra-counter loops share that single
         register, so a loop nested inside another active dbra loop must save/restore the
         outer counter around its own use. Call emission also saves/restores d7 around jsr
@@ -2832,6 +2835,72 @@ class CodeGen:
         self.dbra_depth -= 1
         if nested:
             self.emit(indent + "move.l (a7)+,d7  ; restore outer loop counter")
+
+    def _dbcc_mnemonic(self, op, unsigned=False):
+        """Map a relational/equality op to the DBcc mnemonic that exits when the
+        condition is TRUE (68k DBcc fall-through-on-cc-true semantics)."""
+        if unsigned:
+            table = {
+                '==': 'dbeq', '!=': 'dbne',
+                '<': 'dblo', '<=': 'dbls',
+                '>': 'dbhi', '>=': 'dbcc',
+            }
+        else:
+            table = {
+                '==': 'dbeq', '!=': 'dbne',
+                '<': 'dblt', '<=': 'dble',
+                '>': 'dbgt', '>=': 'dbge',
+            }
+        return table.get(op)
+
+    def _emit_until_dbcc(self, cond, params, locals_info, loop_label, indent, frame_reg="a6"):
+        """Emit cmp that sets flags for ``until (cond)``, then ``dbcc d7,loop_label``.
+
+        Returns True on success. Caller must have already reserved d7 via
+        ``_dbra_loop_enter``. DBcc: if condition true -> fall through (exit);
+        else decrement d7 and branch while d7 != -1.
+        """
+        expr = self._normalize_expr(cond)
+        if not isinstance(expr, ast.BinOp) or expr.op not in ('==', '!=', '<', '<=', '>', '>='):
+            return False
+
+        op = expr.op
+        unsigned = False
+
+        # Constant-left: swap to immediate cmp on the right operand
+        if isinstance(expr.left, ast.Number):
+            const_val = expr.left.value
+            swap_map = {'<': '>', '<=': '>=', '>': '<', '>=': '<=', '==': '==', '!=': '!='}
+            op = swap_map[op]
+            unsigned = self._is_unsigned_expr(expr.right, locals_info, params)
+            code = self._emit_expr(expr.right, params, locals_info, "d0", "d1", target_type=None, frame_reg=frame_reg)
+            for l in code:
+                for sub in str(l).splitlines():
+                    self.emit(sub if sub.startswith(indent) else indent + sub)
+            self.emit(indent + f"cmp.l #{const_val},d0")
+        else:
+            unsigned = (
+                self._is_unsigned_expr(expr.left, locals_info, params)
+                or self._is_unsigned_expr(expr.right, locals_info, params)
+            )
+            code = self._emit_expr(expr.left, params, locals_info, "d0", "d1", target_type=None, frame_reg=frame_reg)
+            for l in code:
+                for sub in str(l).splitlines():
+                    self.emit(sub if sub.startswith(indent) else indent + sub)
+            if isinstance(expr.right, ast.Number):
+                self.emit(indent + f"cmp.l #{expr.right.value},d0")
+            else:
+                code = self._emit_expr(expr.right, params, locals_info, "d1", "d2", target_type=None, frame_reg=frame_reg)
+                for l in code:
+                    for sub in str(l).splitlines():
+                        self.emit(sub if sub.startswith(indent) else indent + sub)
+                self.emit(indent + "cmp.l d1,d0")
+
+        mnemonic = self._dbcc_mnemonic(op, unsigned=unsigned)
+        if not mnemonic:
+            return False
+        self.emit(indent + f"{mnemonic} d7,{loop_label}")
+        return True
 
     def _for_body_blocks_dbra(self, node, var_name):
         """Conservatively detect whether `node` (a loop-body statement/expression, or a
@@ -2878,20 +2947,12 @@ class CodeGen:
             )
         return False
 
-    def _for_loop_dbra_count(self, stmt):
-        """Return the number of iterations if `stmt` (a ForLoop) can be compiled to a
-        single DBcc counter loop, or None if the general compare/increment path must be
-        used instead.
+    def _for_loop_iteration_count(self, stmt):
+        """Return iteration count for a ForLoop when start/end/step are compile-time
+        constants and the span fits DBcc's 1..65536 range; else None.
 
-        Requires: start/end/step all fold to compile-time integer constants; step != 0;
-        the direction (sign of step) actually reaches end from start in >=1 steps; the
-        total iteration count fits DBcc's 0..65535 counter range; and the loop variable
-        is never referenced in the body (see _for_body_blocks_dbra) - DBcc only counts
-        down in d7 and never materializes the loop variable's actual value anywhere.
+        Does not inspect the body - callers decide unused-var vs live-induction paths.
         """
-        if self._for_body_blocks_dbra(stmt.body, stmt.var):
-            return None
-
         start_const, start_val = self._fold_constant(self._normalize_expr(stmt.start))
         end_const, end_val = self._fold_constant(self._normalize_expr(stmt.end))
         step_const, step_val = self._fold_constant(self._normalize_expr(stmt.step))
@@ -2913,6 +2974,17 @@ class CodeGen:
             return None  # Outside DBcc's representable 16-bit counter range.
 
         return count
+
+    def _for_loop_dbra_count(self, stmt):
+        """Return iteration count for the unused-var dbra fast path, or None.
+
+        Requires constant bounds (see `_for_loop_iteration_count`) and that the loop
+        variable is never referenced in the body (`_for_body_blocks_dbra`) - this path
+        only counts down in d7 and never materializes the loop variable.
+        """
+        if self._for_body_blocks_dbra(stmt.body, stmt.var):
+            return None
+        return self._for_loop_iteration_count(stmt)
 
     def _emit_stmt(self, stmt, params, locals_info, proc, indent, is_void, frame_reg="a6"):
         """Emit a single statement within a procedure."""
@@ -3552,9 +3624,7 @@ class CodeGen:
             end_label = self._next_label("endfor")
             cont_label = self._next_label("forcont")
 
-            # Fast path: when start/end/step are compile-time constants and the loop
-            # variable is never referenced in the body, the whole loop collapses to a
-            # single dbra counter - no per-iteration load/compare/increment/store needed.
+            # Fast path A: unused induction var + const bounds -> pure dbra on d7.
             dbra_count = self._for_loop_dbra_count(stmt)
             if dbra_count is not None:
                 self.loop_stack.append((cont_label, end_label))
@@ -3577,11 +3647,7 @@ class CodeGen:
                 self.loop_stack.pop()
                 return
 
-            # Push loop context for break/continue
-            # Continue should jump to the increment step, not the start
-            self.loop_stack.append((cont_label, end_label))
-
-            # Find loop variable in locals
+            # Find loop variable in locals (needed for live-dbra and general paths)
             local_info = next((l for l in locals_info if l[0] == stmt.var), None)
             if not local_info:
                 self._fail(f"Loop variable '{stmt.var}' not found in local variables (should have been caught by validator)")
@@ -3590,6 +3656,56 @@ class CodeGen:
             size = ast.type_size(vtype) if vtype else 4
             suffix = ast.size_suffix(size)
             frame_ea = f"{-offset}({frame_reg})"
+
+            # Fast path B: live induction in Dn + const bounds -> dbra on d7, step in Dn.
+            live_count = self._for_loop_iteration_count(stmt)
+            live_ind_reg = None
+            if (live_count is not None
+                    and not self._for_induction_reg_blocked(stmt.body, stmt.var)):
+                live_ind_reg, _ = self.reg_alloc.try_allocate_preserve()
+
+            if live_ind_reg is not None:
+                # Prefer folded step (e.g. `by -2` parses as UnaryOp, not Number)
+                _, step_val = self._fold_constant(self._normalize_expr(stmt.step))
+                self.loop_stack.append((cont_label, end_label))
+                self.induction_regs[stmt.var] = live_ind_reg
+
+                code = self._emit_expr(stmt.start, params, locals_info, live_ind_reg, target_type=vtype, frame_reg=frame_reg)
+                for l in code:
+                    for sub in str(l).splitlines():
+                        self.emit(sub if sub.startswith(indent) else indent + sub)
+
+                nested = self._dbra_loop_enter(indent)
+                self.emit(indent + f"; for {stmt.var} = ... -> dbra + induction {live_ind_reg}, {live_count} iteration(s)")
+                self.emit(indent + f"move.l #{live_count - 1},d7")
+                self.emit(f"{start_label}:")
+
+                for s in stmt.body:
+                    self._emit_stmt(s, params, locals_info, proc, indent, is_void, frame_reg=frame_reg)
+
+                self.emit(f"{cont_label}:")
+                if 1 <= step_val <= 8:
+                    self.emit(indent + f"addq{suffix} #{step_val},{live_ind_reg}")
+                elif -8 <= step_val <= -1:
+                    self.emit(indent + f"subq{suffix} #{-step_val},{live_ind_reg}")
+                else:
+                    self.emit(indent + f"add{suffix} #{step_val},{live_ind_reg}")
+                self.emit(indent + f"dbra d7,{start_label}")
+                self.emit(f"{end_label}:")
+                self.emit(indent + f"move{suffix} {live_ind_reg},{frame_ea}  ; write back induction {stmt.var}")
+                del self.induction_regs[stmt.var]
+                self.reg_alloc.free(live_ind_reg)
+                if self.annotate:
+                    self.emit(indent + "; end for")
+                self._dbra_loop_exit(indent, nested)
+
+                self.loop_stack.pop()
+                return
+
+            # General path: compare / increment / bra
+            # Push loop context for break/continue
+            # Continue should jump to the increment step, not the start
+            self.loop_stack.append((cont_label, end_label))
 
             dynamic_step = not isinstance(stmt.step, ast.Number)
             # Keep induction var in a high Dn when step is constant and the body
@@ -3749,6 +3865,43 @@ class CodeGen:
             self._dbra_loop_exit(indent, nested)
 
             # Pop loop context
+            self.loop_stack.pop()
+        elif isinstance(stmt, ast.CountdownLoop):
+            # countdown count until (cond) { body } -> DBcc on d7
+            start_label = self._next_label("countdown")
+            end_label = self._next_label("endcountdown")
+            cont_label = self._next_label("countdowncont")
+
+            self.loop_stack.append((cont_label, end_label))
+
+            code = self._emit_expr(stmt.count, params, locals_info, "d0", frame_reg=frame_reg)
+            for l in code:
+                for sub in str(l).splitlines():
+                    self.emit(sub if sub.startswith(indent) else indent + sub)
+
+            # Same N-1 prep as repeat/dbra (countdown 0 wraps to 65536 iterations)
+            self.emit(indent + "subq.l #1,d0")
+            nested = self._dbra_loop_enter(indent)
+            self.emit(indent + "move.l d0,d7")
+            self.emit(indent + "; countdown ... until (...) -> DBcc")
+
+            self.emit(f"{start_label}:")
+            for s in stmt.body:
+                self._emit_stmt(s, params, locals_info, proc, indent, is_void, frame_reg=frame_reg)
+
+            self.emit(f"{cont_label}:")
+            if not self._emit_until_dbcc(
+                stmt.until_cond, params, locals_info, start_label, indent, frame_reg=frame_reg
+            ):
+                self._fail(
+                    "countdown until (...) could not lower to DBcc "
+                    "(expected a simple comparison; should have been caught by validator)"
+                )
+            self.emit(f"{end_label}:")
+            if self.annotate:
+                self.emit(indent + "; end countdown")
+            self._dbra_loop_exit(indent, nested)
+
             self.loop_stack.pop()
         elif isinstance(stmt, ast.Break):
             if not self.loop_stack:

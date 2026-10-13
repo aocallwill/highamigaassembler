@@ -1,0 +1,30 @@
+// Demonstrates countdown N until (cond): a DBcc loop that exits early when
+// the condition becomes true, or after at most N body iterations (same
+// zero-count wrap as repeat/dbra: countdown 0 means 65536).
+
+code test:
+    asm { jmp main }
+
+    proc main() -> void {
+        call find_zero();
+        call capped_search();
+        asm "rts";
+    }
+
+    // Exit as soon as val hits 0 (dbeq), or after 16 iterations.
+    proc find_zero() -> int {
+        var val: int = 5;
+        countdown 16 until (val == 0) {
+            val = val - 1;
+        }
+        return val;
+    }
+
+    // Search until found > 3, with a hard iteration cap.
+    proc capped_search() -> int {
+        var val: int = 0;
+        countdown 10 until (val > 3) {
+            val = val + 1;
+        }
+        return val;
+    }

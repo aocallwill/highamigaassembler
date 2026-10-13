@@ -140,12 +140,17 @@ do { ... } while (cond);
 for i = 0 to 10 { ... }          // BASIC-style, inclusive
 for i = 0 to 100 by 5 { ... }    // 'by' step; step may be a runtime expression
 for i = 10 to 0 by -1 { ... }    // descending via negative step - there is NO 'downto'
-repeat 10 { ... }                // repeat COUNT (expr allowed)
+repeat 10 { ... }                // repeat COUNT (expr allowed) -> always dbra on d7
+countdown 16 until (x == 0) { ... }  // DBcc: exit when cond true, else count down (max N iters)
 loop { ... }                     // endless loop, exit only via `break;` - no condition at all
 ```
 
 There is **no** C-style `for (init; cond; step)`.
-`d7` is reserved compiler-wide for `dbra` counters used by `for`/`repeat`.
+`d7` is reserved compiler-wide for `dbra`/`DBcc` counters used by `for`/`repeat`/`countdown`.
+Constant-bound `for` loops that only **read** the induction variable also emit `dbra` (induction
+kept in a high Dn); assigns to the var, calls, `&var`, or asm naming the var force the general path.
+`countdown N until (cmp)` requires a relational/equality comparison (`== != < <= > >=`); it shares
+`repeat`'s N-1 / zero-wrap semantics (`countdown 0` means 65536 iterations).
 `loop { }` is equivalent to `while(1){}` but emits only a body + unconditional `bra` back to the
 top - no comparison/branch is generated at all, since there's no condition to test.
 
