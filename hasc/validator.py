@@ -433,6 +433,9 @@ class Validator:
                     elif isinstance(stmt, ast.RepeatLoop):
                         if has_local_vars(stmt.body):
                             return True
+                    elif isinstance(stmt, ast.CountdownLoop):
+                        if has_local_vars(stmt.body):
+                            return True
                     elif isinstance(stmt, ast.Loop):
                         if has_local_vars(stmt.body):
                             return True
@@ -486,6 +489,8 @@ class Validator:
                 elif isinstance(stmt, ast.DoWhile):
                     collect_symbols(stmt.body)
                 elif isinstance(stmt, ast.RepeatLoop):
+                    collect_symbols(stmt.body)
+                elif isinstance(stmt, ast.CountdownLoop):
                     collect_symbols(stmt.body)
                 elif isinstance(stmt, ast.Loop):
                     collect_symbols(stmt.body)
@@ -555,6 +560,11 @@ class Validator:
                 continue
             if isinstance(stmt, ast.RepeatLoop):
                 self._validate_expr(stmt.count, symbols, proc)
+                self._validate_stmts(stmt.body, symbols, proc, push_stack.copy())
+                continue
+            if isinstance(stmt, ast.CountdownLoop):
+                self._validate_expr(stmt.count, symbols, proc)
+                self._validate_countdown_until(stmt.until_cond, symbols, proc)
                 self._validate_stmts(stmt.body, symbols, proc, push_stack.copy())
                 continue
             if isinstance(stmt, ast.Loop):
@@ -790,6 +800,20 @@ class Validator:
                 f"live there as a pointer). Declare it as '{name}.suffix[COUNT]' (bracket-dims "
                 f"form) for direct element indexing instead."
             )
+
+    def _validate_countdown_until(self, cond, symbols, proc):
+        """Require countdown until (cond) to be a simple relational/equality comparison."""
+        # Parser eagerly normalizes ==/!=/</>/<=/>= to BinOp; reject anything else for v1 DBcc.
+        if not isinstance(cond, ast.BinOp) or cond.op not in ('==', '!=', '<', '<=', '>', '>='):
+            self.errors.append(
+                f"In proc '{proc.name}': countdown until (...) requires a comparison "
+                f"(==, !=, <, <=, >, >=); got {type(cond).__name__}"
+                + (f" with op {getattr(cond, 'op', None)!r}" if hasattr(cond, 'op') else "")
+            )
+            self._validate_expr(cond, symbols, proc)
+            return
+        self._validate_expr(cond.left, symbols, proc)
+        self._validate_expr(cond.right, symbols, proc)
 
     def _validate_expr(self, expr, symbols, proc):
         """Validate an expression."""

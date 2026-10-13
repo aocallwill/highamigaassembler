@@ -130,6 +130,13 @@ def _collect_direct_calls_from_stmt(stmt, out_calls: Set[str]) -> None:
             _collect_direct_calls_from_stmt(s, out_calls)
         return
 
+    if isinstance(stmt, ast.CountdownLoop):
+        _collect_direct_calls_from_expr(stmt.count, out_calls)
+        _collect_direct_calls_from_expr(stmt.until_cond, out_calls)
+        for s in stmt.body:
+            _collect_direct_calls_from_stmt(s, out_calls)
+        return
+
     if isinstance(stmt, ast.Loop):
         for s in stmt.body:
             _collect_direct_calls_from_stmt(s, out_calls)

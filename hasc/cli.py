@@ -50,6 +50,8 @@ def _count_ast_nodes(node, counter: Counter) -> None:
         counter["for_loop_count"] += 1
     elif isinstance(node, ast.RepeatLoop):
         counter["repeat_loop_count"] += 1
+    elif isinstance(node, ast.CountdownLoop):
+        counter["countdown_loop_count"] += 1
     elif isinstance(node, ast.Loop):
         counter["loop_count"] += 1
 

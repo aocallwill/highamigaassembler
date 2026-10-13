@@ -28,13 +28,18 @@
   laser/meteor free-slot scans). Frame writeback happens at loop `end_label`. Peephole now
   also refuses the fold when Dn is still live after the store.
 - **d7 is the one truly-reserved register**: never used as a general scratch. It is
-  compiler-wide reserved for `dbra` loop counters (`RepeatLoop`, and the `ForLoop` DBcc fast
-  path), managed by `CodeGen.dbra_depth` / `_dbra_loop_enter`/`_dbra_loop_exit`.
+  compiler-wide reserved for `dbra`/`DBcc` loop counters (`RepeatLoop`, `CountdownLoop`,
+  and the `ForLoop` unused-var / live-induction dbra fast paths), managed by
+  `CodeGen.dbra_depth` / `_dbra_loop_enter`/`_dbra_loop_exit`.
 - Nested loops that both want d7 must save/restore d7 around the inner loop via that nesting
   counter.
 - Cross-proc: while `dbra_depth > 0`, call emission must save/restore d7 around `jsr` (and
   `CallStmt` must block the for-dbra fast path the same way `MacroCall` does). Leaving d7
   live across an unprotected call hangs or miscounts the outer loop.
+- Live-induction for-dbra: const bounds + induction not blocked (`_for_induction_reg_blocked`)
+  + a preserve Dn available → init Dn, `dbra` on d7, step Dn at continue, writeback at end.
+  Step may be a folded UnaryOp (`by -2`); use `_fold_constant`, not `stmt.step.value`.
+- `countdown N until (cmp)` → `_emit_until_dbcc`: set flags then `dbcc` (true ⇒ exit).
 
 ## Peephole optimizer already does immediate-load downsizing
 - `hasc/peepholeopt.py`'s `_optimize_immediate_ops` converts `move.l #n,dN` -> `moveq #n,dN`

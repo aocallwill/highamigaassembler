@@ -280,6 +280,19 @@ class RepeatLoop:
 
 
 @dataclass
+class CountdownLoop:
+    """Countdown with early exit: countdown count until (cond) { body }.
+
+    Emits a 68k DBcc loop: after each body iteration, if cond is true the loop
+    exits; otherwise the counter in d7 is decremented and the loop continues
+    while the counter has not reached -1 (same wrap semantics as repeat/dbra).
+    """
+    count: Any
+    until_cond: Any
+    body: List[Any]
+
+
+@dataclass
 class Loop:
     """Infinite loop: loop { body }. Equivalent to while(1){} but with no condition
     check emitted - just an unconditional branch back to the top. Exited only via break."""
